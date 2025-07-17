@@ -7,17 +7,33 @@ const fs = require('fs');
 const fsPromises = fs.promises;
 const path = require('path');
 const cors = require('cors');
-const libre = require('libreoffice-convert');
-const { fromPath } = require('pdf2pic');
 const tmp = require('tmp');
 const { exec } = require('child_process');
 const sevenZip = require('node-7z');
+const aspose = require('aspose.pdf');
 
 const app = express();
 const port = process.env.PORT || 5000;
 
 // Configure CORS
 app.use(cors());
+
+// Apply Aspose.PDF license (optional)
+const applyAsposeLicense = () => {
+  try {
+    const licensePath = path.join(__dirname, 'Aspose.PDF.Node.lic');
+    if (fs.existsSync(licensePath)) {
+      const license = new aspose.License();
+      license.setLicense(licensePath);
+      console.log('Aspose.PDF license applied successfully.');
+    } else {
+      console.warn('Aspose.PDF license not found. Running in trial mode.');
+    }
+  } catch (err) {
+    console.error('Failed to apply Aspose.PDF license:', err.message);
+  }
+};
+applyAsposeLicense();
 
 // All supported formats
 const allFormats = [
@@ -40,9 +56,6 @@ const supportedFormats = {
   archive: allFormats,
   ebook: allFormats,
 };
-
-// Configure LibreOffice path
-libre.soffice = process.env.LIBREOFFICE_PATH || 'soffice'; // Fallback to system PATH
 
 // Configure multer
 const upload = multer({
@@ -223,7 +236,7 @@ app.delete('/api/delete/:filename', async (req, res) => {
     res.status(200).json({ message: `File ${filename} deleted successfully.` });
   } catch (err) {
     console.error(`Error deleting file ${filePath}:`, err.message);
-    res.status(500).json({ error: `Failed to deletezing file ${filename}.` });
+    res.status(500).json({ error: `Failed to delete file ${filename}.` });
   }
 });
 
@@ -247,56 +260,19 @@ async function convertImage(inputPath, outputPath, format) {
         .toFormat(format)
         .toFile(outputPath);
       console.log(`Image conversion completed: ${outputPath}`);
-    } else if (format === 'pdf' || format === 'docx') {
-      let tempPdfPath = format === 'pdf' ? outputPath : path.join(convertedDir, `temp_${Date.now()}.pdf`);
+    } else if (format === 'pdf') {
+      const document = new aspose.Document(inputPath);
+      const pdfSaveOptions = new aspose.PdfSaveOptions();
+      await document.save(outputPath, pdfSaveOptions);
+      console.log(`Image to PDF conversion completed: ${outputPath}`);
+    } else if (format === 'docx') {
+      const tempPdfPath = path.join(convertedDir, `temp_${Date.now()}.pdf`);
       tempFiles.push(tempPdfPath);
-
-      const imageBuffer = await fsPromises.readFile(inputPath);
-      await new Promise((resolve, reject) => {
-        tmp.dir({ unsafeCleanup: true }, (err, tempDir, cleanupCallback) => {
-          if (err) return reject(new Error(`Failed to create temporary directory: ${err.message}`));
-          libre.convert(imageBuffer, '.pdf', { tmpDir: tempDir }, (err, pdfBuffer) => {
-            if (err) {
-              cleanupCallback();
-              return reject(new Error(`Image to PDF conversion failed: ${err.message}`));
-            }
-            fsPromises.writeFile(tempPdfPath, pdfBuffer)
-              .then(() => {
-                cleanupCallback();
-                resolve();
-              })
-              .catch((writeErr) => {
-                cleanupCallback();
-                reject(writeErr);
-              });
-          });
-        });
-      });
-
-      if (format === 'docx') {
-        const pdfBuffer = await fsPromises.readFile(tempPdfPath);
-        await new Promise((resolve, reject) => {
-          tmp.dir({ unsafeCleanup: true }, (err, tempDir, cleanupCallback) => {
-            if (err) return reject(new Error(`Failed to create temporary directory: ${err.message}`));
-            libre.convert(pdfBuffer, '.docx', { tmpDir: tempDir }, (err, docxBuffer) => {
-              if (err) {
-                cleanupCallback();
-                return reject(new Error(`PDF to DOCX conversion failed: ${err.message}`));
-              }
-              fsPromises.writeFile(outputPath, docxBuffer)
-                .then(() => {
-                  cleanupCallback();
-                  resolve();
-                })
-                .catch((writeErr) => {
-                  cleanupCallback();
-                  reject(writeErr);
-                });
-            });
-          });
-        });
-      }
-      console.log(`Image conversion to ${format} completed: ${outputPath}`);
+      const document = new aspose.Document(inputPath);
+      const pdfSaveOptions = new aspose.PdfSaveOptions();
+      await document.save(tempPdfPath, pdfSaveOptions);
+      await convertPdf(tempPdfPath, outputPath, 'docx');
+      console.log(`Image to DOCX conversion completed: ${outputPath}`);
     } else {
       throw new Error(`Unsupported image output format: ${format}`);
     }
@@ -318,38 +294,15 @@ async function convertPdf(inputPath, outputPath, format) {
       return;
     }
 
+    const document = new aspose.Document(inputPath);
     if (['jpg', 'png', 'gif'].includes(format)) {
-      const outputOptions = {
-        density: 100,
-        format: format,
-        width: 600,
-        height: 600,
-      };
-      const convert = fromPath(inputPath, outputOptions);
-      await convert.bulk(-1, { outputPath });
+      const imageSaveOptions = new aspose.ImageSaveOptions(format.toUpperCase());
+      imageSaveOptions.pageSet = new aspose.PageSet(0, -2000); // Convert all pages
+      await document.save(outputPath, imageSaveOptions);
       console.log(`PDF to ${format} conversion completed: ${outputPath}`);
     } else if (format === 'docx') {
-      const pdfBuffer = await fsPromises.readFile(inputPath);
-      await new Promise((resolve, reject) => {
-        tmp.dir({ unsafeCleanup: true }, (err, tempDir, cleanupCallback) => {
-          if (err) return reject(new Error(`Failed to create temporary directory: ${err.message}`));
-          libre.convert(pdfBuffer, '.docx', { tmpDir: tempDir }, (err, docxBuffer) => {
-            if (err) {
-              cleanupCallback();
-              return reject(new Error(`PDF to DOCX conversion failed: ${err.message}`));
-            }
-            fsPromises.writeFile(outputPath, docxBuffer)
-              .then(() => {
-                cleanupCallback();
-                resolve();
-              })
-              .catch((writeErr) => {
-                cleanupCallback();
-                reject(writeErr);
-              });
-          });
-        });
-      });
+      const docxSaveOptions = new aspose.DocxSaveOptions();
+      await document.save(outputPath, docxSaveOptions);
       console.log(`PDF to DOCX conversion completed: ${outputPath}`);
     } else {
       throw new Error(`Unsupported PDF output format: ${format}`);
@@ -377,27 +330,15 @@ async function convertDocument(inputPath, outputPath, format) {
       throw new Error(`Unsupported output document format: ${format}`);
     }
 
-    const buffer = await fsPromises.readFile(inputPath);
-    await new Promise((resolve, reject) => {
-      tmp.dir({ unsafeCleanup: true }, (err, tempDir, cleanupCallback) => {
-        if (err) return reject(new Error(`Failed to create temporary directory: ${err.message}`));
-        libre.convert(buffer, `.${format}`, { tmpDir: tempDir }, (err, convertedBuf) => {
-          if (err) {
-            cleanupCallback();
-            return reject(new Error(`Document conversion failed: ${err.message}`));
-          }
-          fsPromises.writeFile(outputPath, convertedBuf)
-            .then(() => {
-              cleanupCallback();
-              resolve();
-            })
-            .catch((writeErr) => {
-              cleanupCallback();
-              reject(writeErr);
-            });
-        });
-      });
-    });
+    if (inputExt === 'pdf') {
+      await convertPdf(inputPath, outputPath, format);
+    } else {
+      // For non-PDF document conversions, use Calibre (or another tool) if available
+      const tempPdfPath = path.join(convertedDir, `temp_${Date.now()}.pdf`);
+      tempFiles.push(tempPdfPath);
+      await convertEbook(inputPath, tempPdfPath, 'pdf');
+      await convertPdf(tempPdfPath, outputPath, format);
+    }
     console.log(`Document conversion completed: ${outputPath}`);
   } finally {
     await cleanupFiles(tempFiles);
