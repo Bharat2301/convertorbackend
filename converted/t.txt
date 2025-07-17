@@ -1,0 +1,255 @@
+i have backend folder in that i have uploads folder then after i have .env file 
+PORT=5000
+then i have server.js file 
+require('dotenv').config();
+const express = require('express');
+const multer = require('multer');
+const ffmpeg = require('fluent-ffmpeg');
+const sharp = require('sharp');
+const fs = require('fs').promises;
+const path = require('path');
+const archiver = require('archiver');
+const cors = require('cors');
+const libre = require('libreoffice-convert');
+const sevenZip = require('node-7z');
+
+const app = express();
+const port = process.env.PORT || 5000;
+
+// Middleware
+app.use(cors({
+  origin: 'http://localhost:5173', // Adjust if frontend port differs
+}));
+app.use(express.json());
+
+// Supported formats for each type
+const supportedFormats = {
+  image: ['bmp', 'eps', 'gif', 'ico', 'png', 'svg', 'tga', 'tiff', 'wbmp', 'webp', 'jpg', 'jpeg'],
+  compressor: ['jpg', 'png', 'svg'],
+  pdfs: ['docx'],
+  audio: ['mp3', 'wav', 'aac', 'flac', 'ogg', 'opus', 'wma'],
+  video: ['mp4', 'avi', 'mov', 'webm', 'mkv', 'flv', 'wmv'],
+  document: ['docx', 'pdf', 'txt', 'rtf', 'odt'],
+  archive: ['zip', '7z'],
+  ebook: ['epub', 'mobi', 'pdf', 'azw3'],
+};
+
+// Configure multer for file uploads
+const upload = multer({
+  dest: 'uploads/',
+  limits: { fileSize: 100 * 1024 * 1024 }, // 100MB limit
+  fileFilter: (req, file, cb) => {
+    const allowedExtensions = [
+      '.mp3', '.wav', '.aac', '.flac', '.ogg', '.opus', '.wma',
+      '.mp4', '.avi', '.mov', '.webm', '.mkv', '.flv', '.wmv',
+      '.png', '.jpg', '.jpeg', '.webp', '.svg', '.bmp', '.gif', '.ico', '.tga', '.tiff', '.wbmp',
+      '.pdf', '.docx', '.txt', '.rtf', '.odt',
+      '.zip', '.7z',
+      '.epub', '.mobi', '.azw3',
+    ];
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (allowedExtensions.includes(ext)) {
+      cb(null, true);
+    } else {
+      cb(new Error(`Unsupported file type: ${ext}`), false);
+    }
+  },
+});
+
+// Ensure directories exist
+const uploadsDir = path.join(__dirname, 'uploads');
+const convertedDir = path.join(__dirname, 'converted');
+fs.mkdir(uploadsDir, { recursive: true });
+fs.mkdir(convertedDir, { recursive: true });
+
+// Conversion route
+app.post('/api/convert', upload.array('files', 5), async (req, res) => {
+  try {
+    const files = req.files;
+    let formats;
+
+    // Parse formats from request body
+    try {
+      formats = JSON.parse(req.body.formats || '[]');
+    } catch (parseError) {
+      return res.status(400).json({ error: 'Invalid formats data' });
+    }
+
+    if (!files || files.length === 0) {
+      return res.status(400).json({ error: 'No files uploaded' });
+    }
+    if (files.length !== formats.length) {
+      return res.status(400).json({ 
+        error: `Mismatch between files and formats. Files: ${files.length}, Formats: ${formats.length}` 
+      });
+    }
+
+    const outputFiles = [];
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const formatInfo = formats[i];
+      const inputExt = path.extname(file.originalname).toLowerCase().slice(1);
+      const outputExt = formatInfo.target.toLowerCase().split(' ')[0];
+
+      // Validate input and output formats
+      if (!Object.keys(supportedFormats).includes(formatInfo.type)) {
+        throw new Error(`Unsupported conversion type: ${formatInfo.type}`);
+      }
+      if (!supportedFormats[formatInfo.type].includes(outputExt)) {
+        throw new Error(`Unsupported output format: ${outputExt} for type ${formatInfo.type}`);
+      }
+      if (!supportedFormats[formatInfo.type].includes(inputExt) && formatInfo.type !== 'pdfs' && formatInfo.type !== 'document') {
+        throw new Error(`Unsupported input format: ${inputExt} for type ${formatInfo.type}`);
+      }
+
+      const inputPath = file.path;
+      const outputPath = path.join(
+        convertedDir,
+        `${path.basename(file.filename, path.extname(file.filename))}.${outputExt}`
+      );
+
+      switch (formatInfo.type) {
+        case 'image':
+          await convertImage(inputPath, outputPath, outputExt);
+          break;
+        case 'compressor':
+          await compressImage(inputPath, outputPath, outputExt);
+          break;
+        case 'pdfs':
+        case 'document':
+          await convertDocument(inputPath, outputPath, outputExt);
+          break;
+        case 'audio':
+        case 'video':
+          await convertMedia(inputPath, outputPath, outputExt);
+          break;
+        case 'archive':
+          await convertArchive(inputPath, outputPath, outputExt);
+          break;
+        case 'ebook':
+          await convertEbook(inputPath, outputPath, outputExt);
+          break;
+        default:
+          throw new Error(`Unsupported conversion type: ${formatInfo.type}`);
+      }
+      outputFiles.push(outputPath);
+    }
+
+    // Create ZIP file
+    const zipPath = path.join(convertedDir, `converted_${Date.now()}.zip`);
+    await createZip(outputFiles, zipPath);
+
+    // Send ZIP file
+    res.download(zipPath, 'converted_files.zip', async (err) => {
+      if (err) {
+        console.error('Error sending file:', err);
+        res.status(500).json({ error: 'Failed to send converted files' });
+      }
+      // Clean up
+      await cleanupFiles([...files.map(f => f.path), ...outputFiles, zipPath]);
+    });
+  } catch (error) {
+    console.error('Conversion error:', error.message);
+    res.status(500).json({ error: error.message });
+    await cleanupFiles(req.files ? req.files.map(f => f.path) : []);
+  }
+});
+
+// Conversion functions
+async function convertImage(inputPath, outputPath, format) {
+  await sharp(inputPath)
+    .toFormat(format)
+    .toFile(outputPath);
+}
+
+async function compressImage(inputPath, outputPath, format) {
+  await sharp(inputPath)
+    .toFormat(format)
+    .jpeg({ quality: 80 })
+    .png({ compressionLevel: 9 })
+    .toFile(outputPath);
+}
+
+async function convertDocument(inputPath, outputPath, format) {
+  if (format === 'docx' && path.extname(inputPath).toLowerCase() === '.pdf') {
+    return new Promise((resolve, reject) => {
+      fs.readFile(inputPath, (err, buf) => {
+        if (err) return reject(err);
+        libre.convert(buf, '.docx', undefined, (err, docxBuf) => {
+          if (err) return reject(err);
+          fs.writeFile(outputPath, docxBuf, (err) => {
+            if (err) return reject(err);
+            resolve();
+          });
+        });
+      });
+    });
+  } else {
+    throw new Error('Unsupported document conversion');
+  }
+}
+
+async function convertMedia(inputPath, outputPath, format) {
+  return new Promise((resolve, reject) => {
+    ffmpeg(inputPath)
+      .toFormat(format)
+      .on('end', resolve)
+      .on('error', reject)
+      .save(outputPath);
+  });
+}
+
+async function convertArchive(inputPath, outputPath, format) {
+  if (format === 'zip' || format === '7z') {
+    return new Promise((resolve, reject) => {
+      sevenZip.add(outputPath, inputPath, { $raw: { '-t': format } })
+        .on('end', resolve)
+        .on('error', reject);
+    });
+  } else {
+    throw new Error('Unsupported archive format');
+  }
+}
+
+const { exec } = require('child_process');
+async function convertEbook(inputPath, outputPath, format) {
+  return new Promise((resolve, reject) => {
+    exec(`ebook-convert "${inputPath}" "${outputPath}"`, (err) => {
+      if (err) return reject(err);
+      resolve();
+    });
+  });
+}
+
+async function createZip(filePaths, zipPath) {
+  return new Promise((resolve, reject) => {
+    const output = fs.createWriteStream(zipPath);
+    const archive = archiver('zip', { zlib: { level: 9 } });
+
+    output.on('close', resolve);
+    archive.on('error', reject);
+
+    archive.pipe(output);
+    filePaths.forEach(filePath => {
+      archive.file(filePath, { name: path.basename(filePath) });
+    });
+    archive.finalize();
+  });
+}
+
+async function cleanupFiles(filePaths) {
+  for (const filePath of filePaths) {
+    try {
+      await fs.unlink(filePath);
+    } catch (err) {
+      console.error(`Error deleting file ${filePath}:`, err);
+    }
+  }
+}
+
+// Start server
+app.listen(port, () => {
+  console.log(`Server running on http://localhost:${port}`);
+});
+this is my backend code 
