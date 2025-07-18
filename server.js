@@ -201,10 +201,10 @@ const allFormats = [
 const supportedFormats = {
   image: ['bmp', 'eps', 'ico', 'svg', 'tga', 'wbmp', 'jpg', 'png', 'gif', 'tiff', 'webp', 'pdf'],
   compressor: ['jpg', 'png', 'svg'],
-  pdfs: ['jpg', 'png', 'gif', 'docx', 'pdf', 'txt', 'rtf', 'odt'],
+  pdfs: ['jpg', 'png', 'gif', 'docx'],
   audio: ['mp3', 'wav', 'aac', 'flac', 'ogg', 'opus', 'wma', 'aiff', 'm4v', 'mmf', '3g2'],
   video: ['mp4', 'avi', 'mov', 'webm', 'mkv', 'flv', 'wmv'],
-  document: ['docx', 'pdf', 'txt', 'rtf', 'odt'],
+  document: ['docx', 'pdf'],
   archive: ['zip', '7z'],
   ebook: ['epub', 'mobi', 'azw3'],
 };
@@ -321,43 +321,17 @@ async function convertPngToGif(inputPath, outputPath) {
 async function convertImage(inputPath, outputPath, format) {
   const imageFormats = ['bmp', 'eps', 'gif', 'ico', 'png', 'svg', 'tga', 'tiff', 'wbmp', 'webp', 'jpg', 'jpeg'];
   const inputExt = path.extname(inputPath).toLowerCase().slice(1);
-  if (!imageFormats.includes(inputExt) && ['pdf', 'docx', 'txt', 'rtf', 'odt'].includes(inputExt)) {
-    const tempPdfPath = path.join(convertedDir, `temp_${Date.now()}.pdf`);
-    try {
-      await convertDocument(inputPath, tempPdfPath, 'pdf');
-      await convertImage(tempPdfPath, outputPath, format);
-      await fsPromises.unlink(tempPdfPath).catch(err => console.error(`Error cleaning up temp PDF: ${err.message}`));
-    } catch (err) {
-      console.error(`Image conversion preprocessing failed: ${err.message}`);
-      throw err;
-    }
-    return;
+  if (!imageFormats.includes(inputExt) && ['pdf', 'docx'].includes(inputExt)) {
+    throw new Error(`Image conversion from ${inputExt} to ${format} is not supported. Please use the document or pdfs conversion type.`);
   }
   if (imageFormats.includes(format)) {
     await sharp(inputPath)
       .toFormat(format)
       .toFile(outputPath);
     console.log(`Image conversion completed: ${outputPath}`);
-  } else if (format === 'pdf' || format === 'docx') {
-    let tempPdfPath;
-    try {
-      if (format === 'pdf') {
-        tempPdfPath = outputPath;
-      } else {
-        tempPdfPath = path.join(convertedDir, `temp_${Date.now()}.pdf`);
-      }
-      await convertImageToPDF(inputPath, tempPdfPath);
-      if (format === 'docx') {
-        await converter.pdfToWord({ input: tempPdfPath, output: outputPath });
-        await fsPromises.unlink(tempPdfPath).catch(err => console.error(`Error cleaning up temp PDF: ${err.message}`));
-      }
-      console.log(`Image conversion to ${format} completed: ${outputPath}`);
-    } catch (err) {
-      if (tempPdfPath && format === 'docx') {
-        await fsPromises.unlink(tempPdfPath).catch(err => console.error(`Error cleaning up temp PDF: ${err.message}`));
-      }
-      throw err;
-    }
+  } else if (format === 'pdf') {
+    await convertImageToPDF(inputPath, outputPath);
+    console.log(`Image conversion to ${format} completed: ${outputPath}`);
   } else {
     throw new Error(`Unsupported image output format: ${format}`);
   }
@@ -366,16 +340,7 @@ async function convertImage(inputPath, outputPath, format) {
 async function convertPdf(inputPath, outputPath, format) {
   const inputExt = path.extname(inputPath).toLowerCase().slice(1);
   if (inputExt !== 'pdf') {
-    const tempPdfPath = path.join(convertedDir, `temp_${Date.now()}.pdf`);
-    try {
-      await convertDocument(inputPath, tempPdfPath, 'pdf');
-      await convertPdf(tempPdfPath, outputPath, format);
-      await fsPromises.unlink(tempPdfPath).catch(err => console.error(`Error cleaning up temp PDF: ${err.message}`));
-    } catch (err) {
-      console.error(`PDF conversion preprocessing failed: ${err.message}`);
-      throw err;
-    }
-    return;
+    throw new Error(`PDF conversion only supports PDF input files. Got ${inputExt}.`);
   }
   if (['jpg', 'png', 'gif'].includes(format)) {
     try {
@@ -422,46 +387,32 @@ async function convertPdf(inputPath, outputPath, format) {
 
 async function convertDocument(inputPath, outputPath, format) {
   const inputExt = path.extname(inputPath).toLowerCase().slice(1);
-  const supportedDocumentFormats = ['docx', 'pdf', 'txt', 'rtf', 'odt'];
+  const supportedDocumentFormats = ['docx', 'pdf'];
   if (['bmp', 'eps', 'gif', 'ico', 'png', 'svg', 'tga', 'tiff', 'wbmp', 'webp', 'jpg', 'jpeg'].includes(inputExt)) {
-    const tempPdfPath = path.join(convertedDir, `temp_${Date.now()}.pdf`);
-    try {
-      await convertImageToPDF(inputPath, tempPdfPath);
-      await convertDocument(tempPdfPath, outputPath, format);
-      await fsPromises.unlink(tempPdfPath).catch(err => console.error(`Error cleaning up temp PDF: ${err.message}`));
-    } catch (err) {
-      console.error(`Document conversion preprocessing failed: ${err.message}`);
-      throw err;
+    if (format !== 'pdf') {
+      throw new Error(`Image to ${format} conversion is not supported in document type. Use image type for PDF output.`);
     }
+    await convertImageToPDF(inputPath, outputPath);
+    console.log(`Image to PDF conversion completed: ${outputPath}`);
     return;
   }
   if (!supportedDocumentFormats.includes(format)) {
-    throw new Error(`Unsupported output document format: ${format}`);
+    throw new Error(`Unsupported output document format: ${format}. Supported formats: ${supportedDocumentFormats.join(', ')}`);
   }
-  try {
-    if (format === 'pdf') {
-      await converter.convertToPDF({ input: inputPath, output: outputPath });
-    } else if (format === 'docx') {
+  if (inputExt !== 'pdf') {
+    throw new Error(`Document conversion only supports PDF input files. Got ${inputExt}.`);
+  }
+  if (format === 'docx') {
+    try {
       await converter.pdfToWord({ input: inputPath, output: outputPath });
-    } else {
-      // Fallback for txt, rtf, odt: convert to PDF first, then to target format
-      const tempPdfPath = path.join(convertedDir, `temp_${Date.now()}.pdf`);
-      try {
-        await converter.convertToPDF({ input: inputPath, output: tempPdfPath });
-        if (format !== 'pdf') {
-          await converter.pdfToWord({ input: tempPdfPath, output: outputPath }); // Assuming pdfToWord can handle txt, rtf, odt
-        } else {
-          await fsPromises.rename(tempPdfPath, outputPath);
-        }
-        await fsPromises.unlink(tempPdfPath).catch(err => console.error(`Error cleaning up temp PDF: ${err.message}`));
-      } catch (err) {
-        await fsPromises.unlink(tempPdfPath).catch(() => {});
-        throw err;
-      }
+      console.log(`Document conversion to DOCX completed: ${outputPath}`);
+    } catch (err) {
+      throw new Error(`Document conversion failed: ${err.message}`);
     }
-    console.log(`Document conversion completed: ${outputPath}`);
-  } catch (err) {
-    throw new Error(`Document conversion failed: ${err.message}`);
+  } else {
+    // If format is PDF and input is PDF, no conversion needed
+    await fsPromises.copyFile(inputPath, outputPath);
+    console.log(`Document copied (no conversion needed): ${outputPath}`);
   }
 }
 
