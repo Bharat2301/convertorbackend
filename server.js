@@ -13,7 +13,6 @@ const util = require('util');
 const { fileTypeFromBuffer } = require('file-type');
 const ffmpeg = require('fluent-ffmpeg');
 const sharp = require('sharp');
-const libre = require('libreoffice-convert');
 const { fromPath } = require('pdf2pic');
 const sevenZip = require('node-7z');
 
@@ -68,7 +67,6 @@ async function checkDependencies() {
     { name: 'image-to-pdf', module: 'image-to-pdf' },
     { name: 'fluent-ffmpeg', module: 'fluent-ffmpeg' },
     { name: 'sharp', module: 'sharp' },
-    { name: 'libreoffice-convert', module: 'libreoffice-convert' },
     { name: 'pdf2pic', module: 'pdf2pic' },
     { name: 'node-7z', module: 'node-7z' },
     { name: 'multi-format-converter', module: 'multi-format-converter' },
@@ -95,7 +93,6 @@ async function checkDependencies() {
     FRONTEND_URL: process.env.FRONTEND_URL,
     CONVERSION_TIMEOUT: process.env.CONVERSION_TIMEOUT,
     NODE_ENV: process.env.NODE_ENV,
-    LIBREOFFICE_PATH: process.env.LIBREOFFICE_PATH,
   });
   const dependencies = await checkDependencies();
   if (!dependencies['poppler-utils']) {
@@ -441,29 +438,31 @@ async function convertDocument(inputPath, outputPath, format) {
   if (!supportedDocumentFormats.includes(format)) {
     throw new Error(`Unsupported output document format: ${format}`);
   }
-  const buffer = await fsPromises.readFile(inputPath);
-  await new Promise((resolve, reject) => {
-    libre.soffice = process.env.LIBREOFFICE_PATH || 'soffice';
-    tmp.dir({ unsafeCleanup: true }, (err, tempDir, cleanupCallback) => {
-      if (err) return reject(new Error(`Failed to create temporary directory: ${err.message}`));
-      libre.convert(buffer, `.${format}`, { tmpDir: tempDir }, (err, convertedBuf) => {
-        if (err) {
-          cleanupCallback();
-          return reject(new Error(`Document conversion failed: ${err.message}`));
+  try {
+    if (format === 'pdf') {
+      await converter.convertToPDF({ input: inputPath, output: outputPath });
+    } else if (format === 'docx') {
+      await converter.pdfToWord({ input: inputPath, output: outputPath });
+    } else {
+      // Fallback for txt, rtf, odt: convert to PDF first, then to target format
+      const tempPdfPath = path.join(convertedDir, `temp_${Date.now()}.pdf`);
+      try {
+        await converter.convertToPDF({ input: inputPath, output: tempPdfPath });
+        if (format !== 'pdf') {
+          await converter.pdfToWord({ input: tempPdfPath, output: outputPath }); // Assuming pdfToWord can handle txt, rtf, odt
+        } else {
+          await fsPromises.rename(tempPdfPath, outputPath);
         }
-        fsPromises.writeFile(outputPath, convertedBuf)
-          .then(() => {
-            cleanupCallback();
-            resolve();
-          })
-          .catch((writeErr) => {
-            cleanupCallback();
-            reject(writeErr);
-          });
-      });
-    });
-  });
-  console.log(`Document conversion completed: ${outputPath}`);
+        await fsPromises.unlink(tempPdfPath).catch(err => console.error(`Error cleaning up temp PDF: ${err.message}`));
+      } catch (err) {
+        await fsPromises.unlink(tempPdfPath).catch(() => {});
+        throw err;
+      }
+    }
+    console.log(`Document conversion completed: ${outputPath}`);
+  } catch (err) {
+    throw new Error(`Document conversion failed: ${err.message}`);
+  }
 }
 
 async function convertMedia(inputPath, outputPath, format) {
