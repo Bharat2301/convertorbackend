@@ -11,7 +11,7 @@ services:
       - key: PORT
         value: 5001
       - key: FRONTEND_URL
-        value: http://localhost:5173,https://your-frontend-domain-on-render.com  # Explicitly list origins
+        value: http://localhost:5173,https://nion-iota.vercel.app  # Include live frontend URL
       - key: CONVERSION_TIMEOUT
         value: 120000
       - key: NODE_ENV

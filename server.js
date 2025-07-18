@@ -32,10 +32,9 @@ console.log('Environment variables:', {
 // Configure CORS with multiple allowed origins
 const allowedOrigins = process.env.FRONTEND_URL
   ? process.env.FRONTEND_URL.split(',').map(url => url.trim())
-  : ['http://localhost:5173'];
-if (!allowedOrigins.includes('http://localhost:5173')) {
-  allowedOrigins.push('http://localhost:5173'); // Ensure localhost is always allowed
-}
+  : ['http://localhost:5173', 'https://nion-iota.vercel.app'];
+allowedOrigins.push('http://localhost:5173'); // Ensure localhost is always allowed
+allowedOrigins.push('https://nion-iota.vercel.app'); // Ensure live frontend is always allowed
 
 const corsOptions = {
   origin: (origin, callback) => {
@@ -58,8 +57,18 @@ app.use(cors(corsOptions));
 // Middleware to log incoming requests
 app.use((req, res, next) => {
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.url} from ${req.get('Origin') || 'unknown'}`);
-  res.setHeader('X-Powered-By', 'File-Converter'); // Optional: hide Express version
+  res.setHeader('X-Powered-By', 'File-Converter');
   next();
+});
+
+// Root endpoint to confirm server is running
+app.get('/', (req, res) => {
+  res.status(200).json({
+    message: 'File Converter Backend is running',
+    version: '1.0.0',
+    allowedOrigins,
+    timestamp: new Date().toISOString(),
+  });
 });
 
 // Test endpoint to verify server status and CORS
