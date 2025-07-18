@@ -11,6 +11,11 @@ const imgToPDFModule = require('image-to-pdf');
 const { exec } = require('child_process');
 const util = require('util');
 const { fileTypeFromBuffer } = require('file-type');
+const ffmpeg = require('fluent-ffmpeg');
+const sharp = require('sharp');
+const libre = require('libreoffice-convert');
+const { fromPath } = require('pdf2pic');
+const sevenZip = require('node-7z');
 
 const execPromise = util.promisify(exec);
 
@@ -31,16 +36,17 @@ try {
 }
 
 const app = express();
-const port = process.env.PORT || 5001;
+const port = process.env.PORT || 5000;
 const conversionTimeout = parseInt(process.env.CONVERSION_TIMEOUT) || 120000;
 
-// Check for GraphicsMagick/ImageMagick, poppler-utils, and file-type availability
+// Check for dependencies
 async function checkDependencies() {
   const checks = [
     { name: 'GraphicsMagick', command: 'gm version' },
     { name: 'ImageMagick', command: 'convert -version' },
     { name: 'poppler-utils', command: 'pdftoppm -v' },
     { name: 'libvips', command: 'vips --version' },
+    { name: 'ffmpeg', command: 'ffmpeg -version' },
   ];
   const results = {};
 
@@ -55,24 +61,26 @@ async function checkDependencies() {
     }
   }
 
-  // Check if file-type is installed
-  try {
-    require('file-type');
-    console.log('file-type module is installed and available');
-    results['file-type'] = true;
-  } catch (err) {
-    console.warn('file-type module not found:', err.message);
-    results['file-type'] = false;
-  }
+  // Check module dependencies
+  const modules = [
+    { name: 'file-type', module: 'file-type' },
+    { name: 'image-to-pdf', module: 'image-to-pdf' },
+    { name: 'fluent-ffmpeg', module: 'fluent-ffmpeg' },
+    { name: 'sharp', module: 'sharp' },
+    { name: 'libreoffice-convert', module: 'libreoffice-convert' },
+    { name: 'pdf2pic', module: 'pdf2pic' },
+    { name: 'node-7z', module: 'node-7z' },
+  ];
 
-  // Check if image-to-pdf is installed
-  try {
-    const imgToPDFModule = require('image-to-pdf');
-    console.log('image-to-pdf module is installed and available, type:', typeof imgToPDFModule, 'contents:', JSON.stringify(Object.keys(imgToPDFModule)));
-    results['image-to-pdf'] = true;
-  } catch (err) {
-    console.warn('image-to-pdf module not found:', err.message);
-    results['image-to-pdf'] = false;
+  for (const { name, module } of modules) {
+    try {
+      require(module);
+      console.log(`${name} module is installed and available`);
+      results[name] = true;
+    } catch (err) {
+      console.warn(`${name} module not found:`, err.message);
+      results[name] = false;
+    }
   }
 
   return results;
@@ -102,9 +110,12 @@ async function checkDependencies() {
   if (!dependencies['libvips']) {
     console.error('Critical: libvips is not installed. Image to PDF conversions may fail.');
   }
+  if (!dependencies['ffmpeg']) {
+    console.error('Critical: ffmpeg is not installed. Audio/Video conversions will fail.');
+  }
 })();
 
-// Configure CORS with multiple allowed origins
+// Configure CORS for live deployment
 const allowedOrigins = [
   ...(process.env.FRONTEND_URL
     ? process.env.FRONTEND_URL.split(',').map(url => url.trim())
@@ -143,7 +154,7 @@ app.use((req, res, next) => {
   next();
 });
 
-// Root endpoint to confirm server is running
+// Root endpoint
 app.get('/', (req, res) => {
   res.status(200).json({
     message: 'File Converter Backend is running',
@@ -153,7 +164,7 @@ app.get('/', (req, res) => {
   });
 });
 
-// Test endpoint to verify server status and CORS
+// Test endpoint
 app.get('/api/test', (req, res) => {
   res.status(200).json({
     message: 'Server is running',
@@ -174,22 +185,28 @@ try {
 }
 
 // Supported formats
+const allFormats = [
+  'bmp', 'eps', 'gif', 'ico', 'png', 'svg', 'tga', 'tiff', 'wbmp', 'webp', 'jpg', 'jpeg',
+  'pdf', 'docx', 'txt', 'rtf', 'odt',
+  'mp3', 'wav', 'aac', 'flac', 'ogg', 'opus', 'wma',
+  'mp4', 'avi', 'mov', 'webm', 'mkv', 'flv', 'wmv',
+  'zip', '7z',
+  'epub', 'mobi', 'azw3',
+  'aac', 'aiff', 'm4v', 'mmf', 'wma', '3g2',
+];
+
 const supportedFormats = {
-  image: ['bmp', 'eps', 'ico', 'svg', 'tga', 'wbmp', 'jpg', 'png', 'gif', 'pdf'],
-  compressor: ['svg', 'jpg', 'png'],
-  pdfs: ['jpg', 'png', 'gif', 'docx', 'pdf'],
-  audio: ['aac', 'aiff', 'm4v', 'mmf', 'wma', '3g2'],
+  image: ['bmp', 'eps', 'ico', 'svg', 'tga', 'wbmp', 'jpg', 'png', 'gif', 'tiff', 'webp', 'pdf'],
+  compressor: ['jpg', 'png', 'svg'],
+  pdfs: ['jpg', 'png', 'gif', 'docx', 'pdf', 'txt', 'rtf', 'odt'],
+  audio: ['mp3', 'wav', 'aac', 'flac', 'ogg', 'opus', 'wma', 'aiff', 'm4v', 'mmf', '3g2'],
+  video: ['mp4', 'avi', 'mov', 'webm', 'mkv', 'flv', 'wmv'],
+  document: ['docx', 'pdf', 'txt', 'rtf', 'odt'],
+  archive: ['zip', '7z'],
+  ebook: ['epub', 'mobi', 'azw3'],
 };
 
-// Supported image formats for image-to-pdf
 const supportedImageToPdfFormats = ['jpg', 'jpeg', 'png'];
-
-const allFormats = [
-  ...supportedFormats.image,
-  ...supportedFormats.compressor,
-  ...supportedFormats.pdfs,
-  ...supportedFormats.audio,
-];
 
 // Configure multer
 const upload = multer({
@@ -226,7 +243,7 @@ app.get('/health', (req, res) => {
   res.status(200).json({ status: 'OK', allowedOrigins: uniqueAllowedOrigins, timestamp: new Date().toISOString() });
 });
 
-// Validate image file
+// Validation functions
 async function validateImage(inputPath) {
   try {
     const buffer = await fsPromises.readFile(inputPath);
@@ -242,22 +259,29 @@ async function validateImage(inputPath) {
   }
 }
 
-// Image to PDF conversion helper
+async function validatePDF(inputPath) {
+  try {
+    const dataBuffer = await fsPromises.readFile(inputPath);
+    await pdfParse(dataBuffer);
+    console.log(`PDF validation successful for ${inputPath}`);
+    return true;
+  } catch (err) {
+    console.error(`PDF validation failed for ${inputPath}: ${err.message}`);
+    return false;
+  }
+}
+
+// Conversion helper functions
 async function convertImageToPDF(inputPath, outputPath) {
   try {
-    // Validate image format
     const isValidImage = await validateImage(inputPath);
     if (!isValidImage) {
       throw new Error(`Invalid image file: ${inputPath}`);
     }
-
-    // Log imgToPDF details for debugging
-    console.log('imgToPDF type:', typeof imgToPDF, 'isFunction:', typeof imgToPDF === 'function', 'contents:', JSON.stringify(Object.keys(imgToPDF)));
-
+    console.log('imgToPDF type:', typeof imgToPDF, 'isFunction:', typeof imgToPDF === 'function');
     if (typeof imgToPDF !== 'function') {
-      throw new Error('imgToPDF is not a function. Check image-to-pdf module installation. Contents: ' + JSON.stringify(Object.keys(imgToPDF)));
+      throw new Error('imgToPDF is not a function. Check image-to-pdf module installation.');
     }
-
     const imgStream = fs.createReadStream(inputPath);
     const pdfStream = fs.createWriteStream(outputPath);
     await new Promise((resolve, reject) => {
@@ -281,20 +305,6 @@ async function convertImageToPDF(inputPath, outputPath) {
   }
 }
 
-// Validate PDF file
-async function validatePDF(inputPath) {
-  try {
-    const dataBuffer = await fsPromises.readFile(inputPath);
-    await pdfParse(dataBuffer);
-    console.log(`PDF validation successful for ${inputPath}`);
-    return true;
-  } catch (err) {
-    console.error(`PDF validation failed for ${inputPath}: ${err.message}`);
-    return false;
-  }
-}
-
-// Convert PNG to GIF using ImageMagick
 async function convertPngToGif(inputPath, outputPath) {
   try {
     await execPromise(`convert "${inputPath}" "${outputPath}"`);
@@ -302,6 +312,249 @@ async function convertPngToGif(inputPath, outputPath) {
   } catch (err) {
     console.error(`PNG to GIF conversion failed: ${err.message}`);
     throw new Error(`Failed to convert PNG to GIF: ${err.message}`);
+  }
+}
+
+async function convertImage(inputPath, outputPath, format) {
+  const imageFormats = ['bmp', 'eps', 'gif', 'ico', 'png', 'svg', 'tga', 'tiff', 'wbmp', 'webp', 'jpg', 'jpeg'];
+  const inputExt = path.extname(inputPath).toLowerCase().slice(1);
+  if (!imageFormats.includes(inputExt) && ['pdf', 'docx', 'txt', 'rtf', 'odt'].includes(inputExt)) {
+    const tempPdfPath = path.join(convertedDir, `temp_${Date.now()}.pdf`);
+    try {
+      await convertDocument(inputPath, tempPdfPath, 'pdf');
+      await convertImage(tempPdfPath, outputPath, format);
+      await fsPromises.unlink(tempPdfPath).catch(err => console.error(`Error cleaning up temp PDF: ${err.message}`));
+    } catch (err) {
+      console.error(`Image conversion preprocessing failed: ${err.message}`);
+      throw err;
+    }
+    return;
+  }
+  if (imageFormats.includes(format)) {
+    await sharp(inputPath)
+      .toFormat(format)
+      .toFile(outputPath);
+    console.log(`Image conversion completed: ${outputPath}`);
+  } else if (format === 'pdf' || format === 'docx') {
+    let tempPdfPath;
+    try {
+      if (format === 'pdf') {
+        tempPdfPath = outputPath;
+      } else {
+        tempPdfPath = path.join(convertedDir, `temp_${Date.now()}.pdf`);
+      }
+      await convertImageToPDF(inputPath, tempPdfPath);
+      if (format === 'docx') {
+        const pdfBuffer = await fsPromises.readFile(tempPdfPath);
+        await new Promise((resolve, reject) => {
+          libre.soffice = process.env.LIBREOFFICE_PATH || 'soffice'; // Use env variable or default
+          tmp.dir({ unsafeCleanup: true }, (err, tempDir, cleanupCallback) => {
+            if (err) return reject(new Error(`Failed to create temporary directory: ${err.message}`));
+            libre.convert(pdfBuffer, '.docx', { tmpDir: tempDir }, (err, docxBuffer) => {
+              if (err) {
+                cleanupCallback();
+                return reject(new Error(`PDF to DOCX conversion failed: ${err.message}`));
+              }
+              fsPromises.writeFile(outputPath, docxBuffer)
+                .then(() => {
+                  cleanupCallback();
+                  resolve();
+                })
+                .catch((writeErr) => {
+                  cleanupCallback();
+                  reject(writeErr);
+                });
+            });
+          });
+        });
+        await fsPromises.unlink(tempPdfPath).catch(err => console.error(`Error cleaning up temp PDF: ${err.message}`));
+      }
+      console.log(`Image conversion to ${format} completed: ${outputPath}`);
+    } catch (err) {
+      if (tempPdfPath && format === 'docx') {
+        await fsPromises.unlink(tempPdfPath).catch(err => console.error(`Error cleaning up temp PDF: ${err.message}`));
+      }
+      throw err;
+    }
+  } else {
+    throw new Error(`Unsupported image output format: ${format}`);
+  }
+}
+
+async function convertPdf(inputPath, outputPath, format) {
+  const inputExt = path.extname(inputPath).toLowerCase().slice(1);
+  if (inputExt !== 'pdf') {
+    const tempPdfPath = path.join(convertedDir, `temp_${Date.now()}.pdf`);
+    try {
+      await convertDocument(inputPath, tempPdfPath, 'pdf');
+      await convertPdf(tempPdfPath, outputPath, format);
+      await fsPromises.unlink(tempPdfPath).catch(err => console.error(`Error cleaning up temp PDF: ${err.message}`));
+    } catch (err) {
+      console.error(`PDF conversion preprocessing failed: ${err.message}`);
+      throw err;
+    }
+    return;
+  }
+  if (['jpg', 'png', 'gif'].includes(format)) {
+    try {
+      const isValidPDF = await validatePDF(inputPath);
+      if (!isValidPDF) {
+        throw new Error(`Invalid or corrupted PDF file: ${inputPath}`);
+      }
+      const outputBaseName = path.basename(inputPath, '.pdf');
+      const tempOutputPath = path.join(convertedDir, `${outputBaseName}`);
+      let formatOption = format === 'jpg' ? '-jpeg' : `-${format}`;
+      if (format === 'gif') {
+        formatOption = '-png';
+        const tempPngPath = path.join(convertedDir, `${outputBaseName}.png`);
+        await execPromise(`pdftoppm -png -singlefile "${inputPath}" "${tempOutputPath}"`);
+        if (await fsPromises.access(tempPngPath).then(() => true).catch(() => false)) {
+          await convertPngToGif(tempPngPath, outputPath);
+          await fsPromises.unlink(tempPngPath).catch(err => console.error(`Error cleaning up temp PNG: ${err.message}`));
+        } else {
+          throw new Error(`PDF to PNG intermediate output not found: ${tempPngPath}`);
+        }
+      } else {
+        await execPromise(`pdftoppm ${formatOption} -singlefile "${inputPath}" "${tempOutputPath}"`);
+        const generatedPath = path.join(convertedDir, `${outputBaseName}.${format}`);
+        if (await fsPromises.access(generatedPath).then(() => true).catch(() => false)) {
+          await fsPromises.rename(generatedPath, outputPath);
+        } else {
+          throw new Error(`PDF to image output not found: ${generatedPath}`);
+        }
+      }
+    } catch (pdfError) {
+      throw new Error(`PDF to image conversion failed for ${inputPath} to ${format}: ${pdfError.message}`);
+    }
+  } else if (format === 'docx') {
+    const pdfBuffer = await fsPromises.readFile(inputPath);
+    await new Promise((resolve, reject) => {
+      libre.soffice = process.env.LIBREOFFICE_PATH || 'soffice'; // Use env variable or default
+      tmp.dir({ unsafeCleanup: true }, (err, tempDir, cleanupCallback) => {
+        if (err) return reject(new Error(`Failed to create temporary directory: ${err.message}`));
+        libre.convert(pdfBuffer, '.docx', { tmpDir: tempDir }, (err, docxBuffer) => {
+          if (err) {
+            cleanupCallback();
+            return reject(new Error(`PDF to DOCX conversion failed: ${err.message}`));
+          }
+          fsPromises.writeFile(outputPath, docxBuffer)
+            .then(() => {
+              cleanupCallback();
+              resolve();
+            })
+            .catch((writeErr) => {
+              cleanupCallback();
+              reject(writeErr);
+            });
+        });
+      });
+    });
+    console.log(`PDF to DOCX conversion completed: ${outputPath}`);
+  } else {
+    throw new Error(`Unsupported PDF output format: ${format}`);
+  }
+}
+
+async function convertDocument(inputPath, outputPath, format) {
+  const inputExt = path.extname(inputPath).toLowerCase().slice(1);
+  const supportedDocumentFormats = ['docx', 'pdf', 'txt', 'rtf', 'odt'];
+  if (['bmp', 'eps', 'gif', 'ico', 'png', 'svg', 'tga', 'tiff', 'wbmp', 'webp', 'jpg', 'jpeg'].includes(inputExt)) {
+    const tempPdfPath = path.join(convertedDir, `temp_${Date.now()}.pdf`);
+    try {
+      await convertImageToPDF(inputPath, tempPdfPath);
+      await convertDocument(tempPdfPath, outputPath, format);
+      await fsPromises.unlink(tempPdfPath).catch(err => console.error(`Error cleaning up temp PDF: ${err.message}`));
+    } catch (err) {
+      console.error(`Document conversion preprocessing failed: ${err.message}`);
+      throw err;
+    }
+    return;
+  }
+  if (!supportedDocumentFormats.includes(format)) {
+    throw new Error(`Unsupported output document format: ${format}`);
+  }
+  const buffer = await fsPromises.readFile(inputPath);
+  await new Promise((resolve, reject) => {
+    libre.soffice = process.env.LIBREOFFICE_PATH || 'soffice'; // Use env variable or default
+    tmp.dir({ unsafeCleanup: true }, (err, tempDir, cleanupCallback) => {
+      if (err) return reject(new Error(`Failed to create temporary directory: ${err.message}`));
+      libre.convert(buffer, `.${format}`, { tmpDir: tempDir }, (err, convertedBuf) => {
+        if (err) {
+          cleanupCallback();
+          return reject(new Error(`Document conversion failed: ${err.message}`));
+        }
+        fsPromises.writeFile(outputPath, convertedBuf)
+          .then(() => {
+            cleanupCallback();
+            resolve();
+          })
+          .catch((writeErr) => {
+            cleanupCallback();
+            reject(writeErr);
+          });
+      });
+    });
+  });
+  console.log(`Document conversion completed: ${outputPath}`);
+}
+
+async function convertMedia(inputPath, outputPath, format) {
+  return new Promise((resolve, reject) => {
+    ffmpeg(inputPath)
+      .toFormat(format)
+      .on('end', () => {
+        console.log(`Media conversion completed: ${outputPath}`);
+        resolve();
+      })
+      .on('error', (err) => {
+        console.error(`Media conversion error: ${err.message}`);
+        reject(new Error(`Media conversion failed: ${err.message}`));
+      })
+      .save(outputPath);
+  });
+}
+
+async function convertArchive(inputPath, outputPath, format) {
+  if (format === 'zip' || format === '7z') {
+    return new Promise((resolve, reject) => {
+      sevenZip.add(outputPath, inputPath, { $raw: { '-t': format } })
+        .on('end', () => {
+          console.log(`Archive conversion completed: ${outputPath}`);
+          resolve();
+        })
+        .on('error', (err) => {
+          console.error(`Archive conversion error: ${err.message}`);
+          reject(new Error(`Archive conversion failed: ${err.message}`));
+        });
+    });
+  } else {
+    throw new Error(`Unsupported archive format: ${format}`);
+  }
+}
+
+async function convertEbook(inputPath, outputPath, format) {
+  return new Promise((resolve, reject) => {
+    exec(`ebook-convert "${inputPath}" "${outputPath}"`, (err) => {
+      if (err) {
+        console.error(`Ebook conversion error: ${err.message}`);
+        return reject(new Error(`Ebook conversion failed: ${err.message}`));
+      }
+      console.log(`Ebook conversion completed: ${outputPath}`);
+      resolve();
+    });
+  });
+}
+
+async function convertCompressor(inputPath, outputPath, format) {
+  if (format === 'svg') {
+    await converter.compressSvg({ input: inputPath, output: outputPath });
+  } else if (['jpg', 'png'].includes(format)) {
+    await sharp(inputPath)
+      .toFormat(format, { quality: 80 })
+      .toFile(outputPath);
+    console.log(`Image compression completed: ${outputPath}`);
+  } else {
+    throw new Error(`Unsupported compressor output format: ${format}`);
   }
 }
 
@@ -341,12 +594,11 @@ app.post('/api/convert', upload.array('files', 5), async (req, res) => {
       const file = files[i];
       const formatInfo = formats[i];
       const inputExt = path.extname(file.originalname).toLowerCase().slice(1) || 'unknown';
-      const outputExt = formatInfo.target?.toLowerCase();
+      const outputExt = formatInfo.target?.toLowerCase().split(' ')[0];
       const conversionType = formatInfo.type;
-      const subSection = formatInfo.subSection;
 
-      if (!formatInfo.type || !outputExt || !subSection) {
-        throw new Error('Invalid format information: type, subSection, and target are required.');
+      if (!formatInfo.type || !outputExt) {
+        throw new Error('Invalid format information: type and target are required.');
       }
       if (!Object.keys(supportedFormats).includes(conversionType)) {
         throw new Error(`Unsupported conversion type: ${conversionType}. Supported types: ${Object.keys(supportedFormats).join(', ')}`);
@@ -383,7 +635,7 @@ app.post('/api/convert', upload.array('files', 5), async (req, res) => {
         }
       }
 
-      console.log(`Converting ${file.originalname} to ${outputExt} (type: ${conversionType}, subSection: ${subSection})`);
+      console.log(`Converting ${file.originalname} to ${outputExt} (type: ${conversionType})`);
 
       const controller = new AbortController();
       const timeoutId = setTimeout(() => {
@@ -393,49 +645,26 @@ app.post('/api/convert', upload.array('files', 5), async (req, res) => {
       try {
         switch (conversionType) {
           case 'image':
-            if (outputExt === 'pdf') {
-              await convertImageToPDF(inputPath, outputPath);
-            } else {
-              await converter.convertImage({ input: inputPath, output: outputPath, format: outputExt });
-            }
+            await convertImage(inputPath, outputPath, outputExt);
             break;
           case 'compressor':
-            await converter.compressSvg({ input: inputPath, output: outputPath });
+            await convertCompressor(inputPath, outputPath, outputExt);
             break;
           case 'pdfs':
-            if (['jpg', 'png', 'gif'].includes(outputExt)) {
-              try {
-                const outputBaseName = path.basename(inputPath, '.pdf');
-                const tempOutputPath = path.join(convertedDir, `${outputBaseName}`);
-                let formatOption = outputExt === 'jpg' ? '-jpeg' : `-${outputExt}`;
-                if (outputExt === 'gif') {
-                  formatOption = '-png';
-                  const tempPngPath = path.join(convertedDir, `${outputBaseName}.png`);
-                  await execPromise(`pdftoppm -png -singlefile "${inputPath}" "${tempOutputPath}"`);
-                  if (await fsPromises.access(tempPngPath).then(() => true).catch(() => false)) {
-                    await convertPngToGif(tempPngPath, outputPath);
-                    tempFiles.push(tempPngPath);
-                  } else {
-                    throw new Error(`PDF to PNG intermediate output not found: ${tempPngPath}`);
-                  }
-                } else {
-                  await execPromise(`pdftoppm ${formatOption} -singlefile "${inputPath}" "${tempOutputPath}"`);
-                  const generatedPath = path.join(convertedDir, `${outputBaseName}.${outputExt}`);
-                  if (await fsPromises.access(generatedPath).then(() => true).catch(() => false)) {
-                    await fsPromises.rename(generatedPath, outputPath);
-                  } else {
-                    throw new Error(`PDF to image output not found: ${generatedPath}`);
-                  }
-                }
-              } catch (pdfError) {
-                throw new Error(`PDF to image conversion failed for ${inputPath} to ${outputExt}: ${pdfError.message}`);
-              }
-            } else if (outputExt === 'docx') {
-              await converter.pdfToWord({ input: inputPath, output: outputPath });
-            }
+            await convertPdf(inputPath, outputPath, outputExt);
             break;
           case 'audio':
-            await converter.convertAudio({ input: inputPath, output: outputPath, format: outputExt });
+          case 'video':
+            await convertMedia(inputPath, outputPath, outputExt);
+            break;
+          case 'document':
+            await convertDocument(inputPath, outputPath, outputExt);
+            break;
+          case 'archive':
+            await convertArchive(inputPath, outputPath, outputExt);
+            break;
+          case 'ebook':
+            await convertEbook(inputPath, outputPath, outputExt);
             break;
           default:
             throw new Error(`Unsupported conversion type: ${conversionType}`);
@@ -461,7 +690,6 @@ app.post('/api/convert', upload.array('files', 5), async (req, res) => {
     console.error('Conversion error:', error.message, error.stack);
     res.status(500).json({ error: error.message || 'Conversion failed.' });
   } finally {
-    // Only clean up input files, not output files
     await cleanupFiles(tempFiles.filter(file => file.startsWith(uploadsDir)));
   }
 });
