@@ -16,5 +16,7 @@ services:
         value: 120000
       - key: NODE_ENV
         value: production
-    preDeployCommand: apt-get update && apt-get install -y ffmpeg libvips-dev poppler-utils graphicsmagick imagemagick && apt-get clean
-    postDeployCommand: vips --version && npm ls image-to-pdf
+      - key: LIBREOFFICE_PATH
+        value: /usr/lib/libreoffice/program/soffice
+    preDeployCommand: apt-get update && apt-get install -y ffmpeg libvips-dev poppler-utils graphicsmagick imagemagick calibre libreoffice && apt-get clean
+    postDeployCommand: vips --version && ffmpeg -version && npm ls image-to-pdf fluent-ffmpeg sharp libreoffice-convert pdf2pic node-7z
