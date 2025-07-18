@@ -7,10 +7,10 @@ const path = require('path');
 const cors = require('cors');
 const tmp = require('tmp');
 const { FileConverter } = require('multi-format-converter');
-const imgToPDF = require('image-to-pdf');
+const imgToPDF = require('image-to-pdf'); // Default import
 const { exec } = require('child_process');
 const util = require('util');
-const { fileTypeFromBuffer } = require('file-type'); // Updated import for file-type v21.0.0
+const { fileTypeFromBuffer } = require('file-type');
 
 const execPromise = util.promisify(exec);
 
@@ -206,7 +206,7 @@ app.get('/health', (req, res) => {
 async function validateImage(inputPath) {
   try {
     const buffer = await fsPromises.readFile(inputPath);
-    const type = await fileTypeFromBuffer(buffer); // Updated for file-type v21.0.0
+    const type = await fileTypeFromBuffer(buffer);
     if (!type || !supportedImageToPdfFormats.includes(type.ext.toLowerCase())) {
       throw new Error(`Invalid or unsupported image format: ${type ? type.ext : 'unknown'}. Supported formats: ${supportedImageToPdfFormats.join(', ')}`);
     }
@@ -230,7 +230,7 @@ async function convertImageToPDF(inputPath, outputPath) {
     const imgStream = fs.createReadStream(inputPath);
     const pdfStream = fs.createWriteStream(outputPath);
     await new Promise((resolve, reject) => {
-      imgToPDF([inputPath], imgToPDF.sizes.A4).pipe(pdfStream);
+      imgToPDF([inputPath], 'A4').pipe(pdfStream); // Updated to use imgToPDF directly with 'A4'
       pdfStream.on('finish', () => {
         console.log(`Converted image to PDF: ${outputPath}`);
         resolve();
