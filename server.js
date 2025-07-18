@@ -7,12 +7,19 @@ const path = require('path');
 const cors = require('cors');
 const tmp = require('tmp');
 const { FileConverter } = require('multi-format-converter');
-const imgToPDF = require('image-to-pdf'); // Default import
+const imgToPDFModule = require('image-to-pdf');
 const { exec } = require('child_process');
 const util = require('util');
 const { fileTypeFromBuffer } = require('file-type');
 
 const execPromise = util.promisify(exec);
+
+// Determine the correct imgToPDF function
+let imgToPDF = imgToPDFModule;
+if (typeof imgToPDFModule !== 'function' && imgToPDFModule.default && typeof imgToPDFModule.default === 'function') {
+  console.log('Using imgToPDFModule.default as imgToPDF function');
+  imgToPDF = imgToPDFModule.default;
+}
 
 // Patch pdf-parse to handle ENOENT error
 let pdfParse;
@@ -33,7 +40,7 @@ async function checkDependencies() {
     { name: 'GraphicsMagick', command: 'gm version' },
     { name: 'ImageMagick', command: 'convert -version' },
     { name: 'poppler-utils', command: 'pdftoppm -v' },
-    { name: 'libvips', command: 'vips --version' }, // Added to verify libvips
+    { name: 'libvips', command: 'vips --version' },
   ];
   const results = {};
 
@@ -60,8 +67,8 @@ async function checkDependencies() {
 
   // Check if image-to-pdf is installed
   try {
-    require('image-to-pdf');
-    console.log('image-to-pdf module is installed and available');
+    const imgToPDFModule = require('image-to-pdf');
+    console.log('image-to-pdf module is installed and available, type:', typeof imgToPDFModule, 'contents:', JSON.stringify(Object.keys(imgToPDFModule)));
     results['image-to-pdf'] = true;
   } catch (err) {
     console.warn('image-to-pdf module not found:', err.message);
@@ -244,10 +251,11 @@ async function convertImageToPDF(inputPath, outputPath) {
       throw new Error(`Invalid image file: ${inputPath}`);
     }
 
-    // Log imgToPDF to debug
-    console.log('imgToPDF type:', typeof imgToPDF, 'isFunction:', typeof imgToPDF === 'function');
+    // Log imgToPDF details for debugging
+    console.log('imgToPDF type:', typeof imgToPDF, 'isFunction:', typeof imgToPDF === 'function', 'contents:', JSON.stringify(Object.keys(imgToPDF)));
+
     if (typeof imgToPDF !== 'function') {
-      throw new Error('imgToPDF is not a function. Check image-to-pdf module installation.');
+      throw new Error('imgToPDF is not a function. Check image-to-pdf module installation. Contents: ' + JSON.stringify(Object.keys(imgToPDF)));
     }
 
     const imgStream = fs.createReadStream(inputPath);
