@@ -1,3 +1,4 @@
+i have server.js file 
 require('dotenv').config();
 const express = require('express');
 const multer = require('multer');
@@ -32,10 +33,9 @@ console.log('Environment variables:', {
 // Configure CORS with multiple allowed origins
 const allowedOrigins = process.env.FRONTEND_URL
   ? process.env.FRONTEND_URL.split(',').map(url => url.trim())
-  : ['http://localhost:5173'];
-if (!allowedOrigins.includes('http://localhost:5173')) {
-  allowedOrigins.push('http://localhost:5173'); // Ensure localhost is always allowed
-}
+  : ['http://localhost:5173', 'https://nion-iota.vercel.app'];
+allowedOrigins.push('http://localhost:5173'); // Ensure localhost is always allowed
+allowedOrigins.push('https://nion-iota.vercel.app'); // Ensure live frontend is always allowed
 
 const corsOptions = {
   origin: (origin, callback) => {
@@ -58,8 +58,18 @@ app.use(cors(corsOptions));
 // Middleware to log incoming requests
 app.use((req, res, next) => {
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.url} from ${req.get('Origin') || 'unknown'}`);
-  res.setHeader('X-Powered-By', 'File-Converter'); // Optional: hide Express version
+  res.setHeader('X-Powered-By', 'File-Converter');
   next();
+});
+
+// Root endpoint to confirm server is running
+app.get('/', (req, res) => {
+  res.status(200).json({
+    message: 'File Converter Backend is running',
+    version: '1.0.0',
+    allowedOrigins,
+    timestamp: new Date().toISOString(),
+  });
 });
 
 // Test endpoint to verify server status and CORS
@@ -363,57 +373,10 @@ async function startServer() {
 }
 
 startServer();
-this is my server.js file 
-services:
-  - type: web
-    name: file-converter-backend
-    env: node
-    plan: free
-    buildCommand: npm ci
-    startCommand: node server.js
-    envVars:
-      - key: NODE_VERSION
-        value: 18.16.0  # Use LTS version for compatibility
-      - key: PORT
-        value: 5001
-      - key: FRONTEND_URL
-        value: http://localhost:5173,https://your-frontend-domain-on-render.com  # Explicitly list origins
-      - key: CONVERSION_TIMEOUT
-        value: 120000
-      - key: NODE_ENV
-        value: production
-    preDeployCommand: apt-get update && apt-get install -y ffmpeg libvips-dev poppler-utils
-    this is my render.yaml file 
-    {
-  "name": "file-converter-backend",
-  "version": "1.0.0",
-  "main": "server.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node server.js",
-    "dev": "nodemon server.js"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "dependencies": {
-    "cors": "^2.8.5",
-    "dotenv": "^16.4.5",
-    "express": "^4.18.2",
-    "multer": "^1.4.5-lts.1",
-    "multi-format-converter": "^1.1.2",
-    "pdf-parse": "^1.1.1",
-    "tmp": "^0.2.3"
-  },
-  "devDependencies": {
-    "nodemon": "^3.1.7"
-  },
-  "description": ""
-}
-
-this is my package.json file 
 PORT=5001
-FRONTEND_URL=https://your-frontend-domain-on-render.com
+FRONTEND_URL=http://localhost:5173,https://nion-ochre.vercel.app
 CONVERSION_TIMEOUT=120000
-this is my backend code 
-https://nion-iota.vercel.app/ this is my frontened live url and solve cors error 
+NODE_ENV=development
+[2025-07-18T09:27:52.502Z] GET / from unknown
+CORS request blocked from origin: https://nion-ochre.vercel.app. Allowed origins: http://localhost:5173, https://nion-iota.vercel.app, http://localhost:5173, https://nion-iota.vercel.app
+Unhandled error: Not allowed by CORS Error: Not allowed by CORS

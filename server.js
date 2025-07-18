@@ -30,18 +30,25 @@ console.log('Environment variables:', {
 });
 
 // Configure CORS with multiple allowed origins
-const allowedOrigins = process.env.FRONTEND_URL
-  ? process.env.FRONTEND_URL.split(',').map(url => url.trim())
-  : ['http://localhost:5173', 'https://nion-iota.vercel.app'];
-allowedOrigins.push('http://localhost:5173'); // Ensure localhost is always allowed
-allowedOrigins.push('https://nion-iota.vercel.app'); // Ensure live frontend is always allowed
+const allowedOrigins = [
+  ...(process.env.FRONTEND_URL
+    ? process.env.FRONTEND_URL.split(',').map(url => url.trim())
+    : ['http://localhost:5173', 'https://nion-ochre.vercel.app']),
+];
+const uniqueAllowedOrigins = [...new Set(allowedOrigins)]; // Remove duplicates
+if (!uniqueAllowedOrigins.includes('http://localhost:5173')) {
+  uniqueAllowedOrigins.push('http://localhost:5173');
+}
+if (!uniqueAllowedOrigins.includes('https://nion-ochre.vercel.app')) {
+  uniqueAllowedOrigins.push('https://nion-ochre.vercel.app');
+}
 
 const corsOptions = {
   origin: (origin, callback) => {
-    if (!origin || allowedOrigins.includes(origin)) {
+    if (!origin || uniqueAllowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
-      console.error(`CORS request blocked from origin: ${origin}. Allowed origins: ${allowedOrigins.join(', ')}`);
+      console.error(`CORS request blocked from origin: ${origin}. Allowed origins: ${uniqueAllowedOrigins.join(', ')}`);
       callback(new Error('Not allowed by CORS'));
     }
   },
@@ -66,7 +73,7 @@ app.get('/', (req, res) => {
   res.status(200).json({
     message: 'File Converter Backend is running',
     version: '1.0.0',
-    allowedOrigins,
+    allowedOrigins: uniqueAllowedOrigins,
     timestamp: new Date().toISOString(),
   });
 });
@@ -75,7 +82,7 @@ app.get('/', (req, res) => {
 app.get('/api/test', (req, res) => {
   res.status(200).json({
     message: 'Server is running',
-    allowedOrigins,
+    allowedOrigins: uniqueAllowedOrigins,
     nodeVersion: process.version,
     timestamp: new Date().toISOString(),
   });
@@ -139,7 +146,7 @@ async function ensureDirectories() {
 
 // Health check endpoint
 app.get('/health', (req, res) => {
-  res.status(200).json({ status: 'OK', allowedOrigins, timestamp: new Date().toISOString() });
+  res.status(200).json({ status: 'OK', allowedOrigins: uniqueAllowedOrigins, timestamp: new Date().toISOString() });
 });
 
 // Conversion route
@@ -363,7 +370,7 @@ async function startServer() {
     await ensureDirectories();
     app.listen(port, () => {
       console.log(`Server running on http://localhost:${port}`);
-      console.log(`CORS allowed origins: ${allowedOrigins.join(', ')}`);
+      console.log(`CORS allowed origins: ${uniqueAllowedOrigins.join(', ')}`);
     });
   } catch (err) {
     console.error('Failed to start server:', err.message, err.stack);

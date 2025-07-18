@@ -11,7 +11,7 @@ services:
       - key: PORT
         value: 5001
       - key: FRONTEND_URL
-        value: http://localhost:5173,https://nion-ochre.vercel.app  # Include live frontend URL
+        value: http://localhost:5173,https://nion-ochre.vercel.app  # Updated to match live frontend
       - key: CONVERSION_TIMEOUT
         value: 120000
       - key: NODE_ENV
