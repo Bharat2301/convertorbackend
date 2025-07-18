@@ -14,7 +14,6 @@ try {
   pdfParse = require('pdf-parse');
 } catch (err) {
   console.warn('pdf-parse initialization failed:', err.message);
-  // Minimal mock to prevent crashes
   pdfParse = { renderPage: () => Promise.resolve(Buffer.from('')) };
 }
 
@@ -22,18 +21,45 @@ const app = express();
 const port = process.env.PORT || 5001;
 const conversionTimeout = parseInt(process.env.CONVERSION_TIMEOUT) || 120000;
 
-// Initialize FileConverter with patched pdf-parse (if supported)
-const converter = new FileConverter({ pdfParse });
+// Validate environment variables Secondary
+if (!process.env.FRONTEND_URL) {
+  console.warn('FRONTEND_URL not set in environment variables. Defaulting to localhost:5173');
+}
 
-// Configure CORS with frontend URL
+// Configure CORS with multiple allowed origins
+const allowedOrigins = [
+  process.env.FRONTEND_URL || 'http://localhost:5173',
+  'https://your-frontend-domain.com', // Replace with your production frontend URL
+];
+
 const corsOptions = {
-  origin: process.env.FRONTEND_URL || 'http://localhost:5173',
-  methods: ['GET', 'POST', 'DELETE'],
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      console.error(`CORS request blocked from origin: ${origin}`);
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type'],
+  credentials: true, // Allow cookies/auth headers if needed
+  preflightContinue: false,
+  optionsSuccessStatus: 204, // Standard status for OPTIONS requests
 };
+
 app.use(cors(corsOptions));
 
-// Supported formats for each conversion type
+// Middleware to log incoming requests for debugging
+app.use((req, res, next) => {
+  console.log(`${req.method} ${req.url} from ${req.get('Origin')}`);
+  next();
+});
+
+// Initialize FileConverter
+const converter = new FileConverter({ pdfParse });
+
+// Supported formats
 const supportedFormats = {
   image: ['bmp', 'eps', 'ico', 'svg', 'tga', 'wbmp'],
   compressor: ['svg'],
@@ -41,13 +67,12 @@ const supportedFormats = {
   audio: ['aac', 'aiff', 'm4v', 'mmf', 'wma', '3g2'],
 };
 
-// All supported extensions (for file validation)
 const allFormats = [
   ...supportedFormats.image,
   ...supportedFormats.compressor,
   ...supportedFormats.pdfs,
   ...supportedFormats.audio,
-  'pdf', // Input format for PDFs
+  'pdf',
 ];
 
 // Configure multer
@@ -120,7 +145,6 @@ app.post('/api/convert', upload.array('files', 5), async (req, res) => {
       const conversionType = formatInfo.type;
       const subSection = formatInfo.subSection;
 
-      // Validate inputs
       if (!formatInfo.type || !outputExt || !subSection) {
         throw new Error('Invalid format information: type, subSection, and target are required.');
       }
@@ -206,7 +230,7 @@ app.post('/api/convert', upload.array('files', 5), async (req, res) => {
   }
 });
 
-// Serve converted files and delete after download
+// Serve converted files
 app.get('/converted/:filename', async (req, res) => {
   const filename = req.params.filename;
   const filePath = path.resolve(convertedDir, filename);
@@ -273,7 +297,7 @@ async function cleanupFiles(filePaths) {
   }
 }
 
-// Periodic cleanup of old converted files (24 hours)
+// Periodic cleanup of old files
 setInterval(async () => {
   try {
     const files = await fsPromises.readdir(convertedDir);
@@ -288,11 +312,11 @@ setInterval(async () => {
   } catch (err) {
     console.error('Error in periodic cleanup:', err.message);
   }
-}, 60 * 60 * 1000); // Run hourly
+}, 60 * 60 * 1000);
 
 // Error handling middleware
 app.use((err, req, res, next) => {
-  console.error('Unhandled error:', err.message);
+  console.error('Unhandled error:', err.message, err.stack);
   res.status(500).json({ error: 'Internal server error.' });
 });
 
@@ -302,6 +326,7 @@ async function startServer() {
     await ensureDirectories();
     app.listen(port, () => {
       console.log(`Server running on http://localhost:${port}`);
+      console.log(`CORS allowed origins: ${allowedOrigins.join(', ')}`);
     });
   } catch (err) {
     console.error('Failed to start server:', err.message);
