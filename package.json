@@ -16,6 +16,7 @@
     "express": "^5.1.0",
     "fs": "^0.0.1-security",
     "multer": "^2.0.1",
+    "multi-format-converter": "^1.0.0",
     "path": "^0.12.7",
     "tmp": "^0.2.3"
   },
