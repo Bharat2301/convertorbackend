@@ -26,5 +26,5 @@ services:
     postDeployCommand: |
       vips --version && \
       ffmpeg -version && \
-      soffice --version && \
-      npm ls image-to-pdf fluent-ffmpeg sharp libreoffice-convert pdf2pic node-7z
+      ebook-convert --version && \
+      npm ls image-to-pdf fluent-ffmpeg sharp libreoffice-convert pdf2pic node-7z multi-format-converter

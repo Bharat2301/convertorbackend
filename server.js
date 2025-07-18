@@ -36,7 +36,7 @@ try {
 }
 
 const app = express();
-const port = process.env.PORT || 5000;
+const port = process.env.PORT || 5001;
 const conversionTimeout = parseInt(process.env.CONVERSION_TIMEOUT) || 120000;
 
 // Check for dependencies
@@ -47,16 +47,17 @@ async function checkDependencies() {
     { name: 'poppler-utils', command: 'pdftoppm -v' },
     { name: 'libvips', command: 'vips --version' },
     { name: 'ffmpeg', command: 'ffmpeg -version' },
+    { name: 'calibre', command: 'ebook-convert --version' },
   ];
   const results = {};
 
   for (const { name, command } of checks) {
     try {
-      await execPromise(command);
-      console.log(`${name} is installed and available`);
+      const { stdout } = await execPromise(command);
+      console.log(`${name} is installed and available: ${stdout.trim()}`);
       results[name] = true;
     } catch (err) {
-      console.warn(`${name} not found:`, err.message);
+      console.warn(`${name} not found: ${err.message}`);
       results[name] = false;
     }
   }
@@ -70,6 +71,7 @@ async function checkDependencies() {
     { name: 'libreoffice-convert', module: 'libreoffice-convert' },
     { name: 'pdf2pic', module: 'pdf2pic' },
     { name: 'node-7z', module: 'node-7z' },
+    { name: 'multi-format-converter', module: 'multi-format-converter' },
   ];
 
   for (const { name, module } of modules) {
@@ -78,7 +80,7 @@ async function checkDependencies() {
       console.log(`${name} module is installed and available`);
       results[name] = true;
     } catch (err) {
-      console.warn(`${name} module not found:`, err.message);
+      console.warn(`${name} module not found: ${err.message}`);
       results[name] = false;
     }
   }
@@ -93,6 +95,7 @@ async function checkDependencies() {
     FRONTEND_URL: process.env.FRONTEND_URL,
     CONVERSION_TIMEOUT: process.env.CONVERSION_TIMEOUT,
     NODE_ENV: process.env.NODE_ENV,
+    LIBREOFFICE_PATH: process.env.LIBREOFFICE_PATH,
   });
   const dependencies = await checkDependencies();
   if (!dependencies['poppler-utils']) {
@@ -112,6 +115,9 @@ async function checkDependencies() {
   }
   if (!dependencies['ffmpeg']) {
     console.error('Critical: ffmpeg is not installed. Audio/Video conversions will fail.');
+  }
+  if (!dependencies['calibre']) {
+    console.warn('Warning: calibre is not installed. Ebook conversions will fail.');
   }
 })();
 
@@ -345,28 +351,7 @@ async function convertImage(inputPath, outputPath, format) {
       }
       await convertImageToPDF(inputPath, tempPdfPath);
       if (format === 'docx') {
-        const pdfBuffer = await fsPromises.readFile(tempPdfPath);
-        await new Promise((resolve, reject) => {
-          libre.soffice = process.env.LIBREOFFICE_PATH || 'soffice'; // Use env variable or default
-          tmp.dir({ unsafeCleanup: true }, (err, tempDir, cleanupCallback) => {
-            if (err) return reject(new Error(`Failed to create temporary directory: ${err.message}`));
-            libre.convert(pdfBuffer, '.docx', { tmpDir: tempDir }, (err, docxBuffer) => {
-              if (err) {
-                cleanupCallback();
-                return reject(new Error(`PDF to DOCX conversion failed: ${err.message}`));
-              }
-              fsPromises.writeFile(outputPath, docxBuffer)
-                .then(() => {
-                  cleanupCallback();
-                  resolve();
-                })
-                .catch((writeErr) => {
-                  cleanupCallback();
-                  reject(writeErr);
-                });
-            });
-          });
-        });
+        await converter.pdfToWord({ input: tempPdfPath, output: outputPath });
         await fsPromises.unlink(tempPdfPath).catch(err => console.error(`Error cleaning up temp PDF: ${err.message}`));
       }
       console.log(`Image conversion to ${format} completed: ${outputPath}`);
@@ -427,29 +412,12 @@ async function convertPdf(inputPath, outputPath, format) {
       throw new Error(`PDF to image conversion failed for ${inputPath} to ${format}: ${pdfError.message}`);
     }
   } else if (format === 'docx') {
-    const pdfBuffer = await fsPromises.readFile(inputPath);
-    await new Promise((resolve, reject) => {
-      libre.soffice = process.env.LIBREOFFICE_PATH || 'soffice'; // Use env variable or default
-      tmp.dir({ unsafeCleanup: true }, (err, tempDir, cleanupCallback) => {
-        if (err) return reject(new Error(`Failed to create temporary directory: ${err.message}`));
-        libre.convert(pdfBuffer, '.docx', { tmpDir: tempDir }, (err, docxBuffer) => {
-          if (err) {
-            cleanupCallback();
-            return reject(new Error(`PDF to DOCX conversion failed: ${err.message}`));
-          }
-          fsPromises.writeFile(outputPath, docxBuffer)
-            .then(() => {
-              cleanupCallback();
-              resolve();
-            })
-            .catch((writeErr) => {
-              cleanupCallback();
-              reject(writeErr);
-            });
-        });
-      });
-    });
-    console.log(`PDF to DOCX conversion completed: ${outputPath}`);
+    try {
+      await converter.pdfToWord({ input: inputPath, output: outputPath });
+      console.log(`PDF to DOCX conversion completed using multi-format-converter: ${outputPath}`);
+    } catch (err) {
+      throw new Error(`PDF to DOCX conversion failed: ${err.message}`);
+    }
   } else {
     throw new Error(`Unsupported PDF output format: ${format}`);
   }
@@ -475,7 +443,7 @@ async function convertDocument(inputPath, outputPath, format) {
   }
   const buffer = await fsPromises.readFile(inputPath);
   await new Promise((resolve, reject) => {
-    libre.soffice = process.env.LIBREOFFICE_PATH || 'soffice'; // Use env variable or default
+    libre.soffice = process.env.LIBREOFFICE_PATH || 'soffice';
     tmp.dir({ unsafeCleanup: true }, (err, tempDir, cleanupCallback) => {
       if (err) return reject(new Error(`Failed to create temporary directory: ${err.message}`));
       libre.convert(buffer, `.${format}`, { tmpDir: tempDir }, (err, convertedBuf) => {
