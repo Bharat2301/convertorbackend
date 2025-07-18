@@ -1,7 +1,35 @@
-i have backend folder in that i have converted folder then i have uploads folder then i have .env file 
+i have backened code in that i have .env file 
 PORT=5001
 FRONTEND_URL=https://your-frontend-domain-on-render.com
 CONVERSION_TIMEOUT=120000
+then i have package.json file 
+{
+  "name": "file-converter-backend",
+  "version": "1.0.0",
+  "main": "server.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.18.2",
+    "multer": "^1.4.5-lts.1",
+    "multi-format-converter": "^1.1.2",
+    "pdf-parse": "^1.1.1",
+    "tmp": "^0.2.3"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.7"
+  },
+  "description": ""
+}
+
 then i have render.yaml file 
 services:
   - type: web
@@ -38,7 +66,6 @@ try {
   pdfParse = require('pdf-parse');
 } catch (err) {
   console.warn('pdf-parse initialization failed:', err.message);
-  // Minimal mock to prevent crashes
   pdfParse = { renderPage: () => Promise.resolve(Buffer.from('')) };
 }
 
@@ -46,18 +73,45 @@ const app = express();
 const port = process.env.PORT || 5001;
 const conversionTimeout = parseInt(process.env.CONVERSION_TIMEOUT) || 120000;
 
-// Initialize FileConverter with patched pdf-parse (if supported)
-const converter = new FileConverter({ pdfParse });
+// Validate environment variables Secondary
+if (!process.env.FRONTEND_URL) {
+  console.warn('FRONTEND_URL not set in environment variables. Defaulting to localhost:5173');
+}
 
-// Configure CORS with frontend URL
+// Configure CORS with multiple allowed origins
+const allowedOrigins = [
+  process.env.FRONTEND_URL || 'http://localhost:5173',
+  'https://your-frontend-domain.com', // Replace with your production frontend URL
+];
+
 const corsOptions = {
-  origin: process.env.FRONTEND_URL || 'http://localhost:5173',
-  methods: ['GET', 'POST', 'DELETE'],
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      console.error(`CORS request blocked from origin: ${origin}`);
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type'],
+  credentials: true, // Allow cookies/auth headers if needed
+  preflightContinue: false,
+  optionsSuccessStatus: 204, // Standard status for OPTIONS requests
 };
+
 app.use(cors(corsOptions));
 
-// Supported formats for each conversion type
+// Middleware to log incoming requests for debugging
+app.use((req, res, next) => {
+  console.log(`${req.method} ${req.url} from ${req.get('Origin')}`);
+  next();
+});
+
+// Initialize FileConverter
+const converter = new FileConverter({ pdfParse });
+
+// Supported formats
 const supportedFormats = {
   image: ['bmp', 'eps', 'ico', 'svg', 'tga', 'wbmp'],
   compressor: ['svg'],
@@ -65,13 +119,12 @@ const supportedFormats = {
   audio: ['aac', 'aiff', 'm4v', 'mmf', 'wma', '3g2'],
 };
 
-// All supported extensions (for file validation)
 const allFormats = [
   ...supportedFormats.image,
   ...supportedFormats.compressor,
   ...supportedFormats.pdfs,
   ...supportedFormats.audio,
-  'pdf', // Input format for PDFs
+  'pdf',
 ];
 
 // Configure multer
@@ -144,7 +197,6 @@ app.post('/api/convert', upload.array('files', 5), async (req, res) => {
       const conversionType = formatInfo.type;
       const subSection = formatInfo.subSection;
 
-      // Validate inputs
       if (!formatInfo.type || !outputExt || !subSection) {
         throw new Error('Invalid format information: type, subSection, and target are required.');
       }
@@ -230,7 +282,7 @@ app.post('/api/convert', upload.array('files', 5), async (req, res) => {
   }
 });
 
-// Serve converted files and delete after download
+// Serve converted files
 app.get('/converted/:filename', async (req, res) => {
   const filename = req.params.filename;
   const filePath = path.resolve(convertedDir, filename);
@@ -297,7 +349,7 @@ async function cleanupFiles(filePaths) {
   }
 }
 
-// Periodic cleanup of old converted files (24 hours)
+// Periodic cleanup of old files
 setInterval(async () => {
   try {
     const files = await fsPromises.readdir(convertedDir);
@@ -312,11 +364,11 @@ setInterval(async () => {
   } catch (err) {
     console.error('Error in periodic cleanup:', err.message);
   }
-}, 60 * 60 * 1000); // Run hourly
+}, 60 * 60 * 1000);
 
 // Error handling middleware
 app.use((err, req, res, next) => {
-  console.error('Unhandled error:', err.message);
+  console.error('Unhandled error:', err.message, err.stack);
   res.status(500).json({ error: 'Internal server error.' });
 });
 
@@ -326,6 +378,7 @@ async function startServer() {
     await ensureDirectories();
     app.listen(port, () => {
       console.log(`Server running on http://localhost:${port}`);
+      console.log(`CORS allowed origins: ${allowedOrigins.join(', ')}`);
     });
   } catch (err) {
     console.error('Failed to start server:', err.message);
@@ -334,32 +387,862 @@ async function startServer() {
 }
 
 startServer();
-then i have package.json file 
-{
-  "name": "file-converter-backend",
-  "version": "1.0.0",
-  "main": "server.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node server.js",
-    "dev": "nodemon server.js"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "dependencies": {
-    "cors": "^2.8.5",
-    "dotenv": "^16.4.5",
-    "express": "^4.18.2",
-    "multer": "^1.4.5-lts.1",
-    "multi-format-converter": "^1.1.2",
-    "pdf-parse": "^1.1.1",
-    "tmp": "^0.2.3"
-  },
-  "devDependencies": {
-    "nodemon": "^3.1.7"
-  },
-  "description": ""
+this is my backened code 
+then i have frontend folder in that i have src folcer in that i have components folder in taht i have Dropbox.tsx file 
+import React, { useEffect, useRef, useState } from 'react';
+import { FaFolderOpen, FaDropbox, FaGoogleDrive } from 'react-icons/fa';
+import { FiArrowRight, FiDownload } from 'react-icons/fi';
+
+// Define interfaces for external APIs
+interface GooglePickerResponse {
+  action: string;
+  docs: Array<{ id: string; name: string; url: string }>;
 }
 
-this is my backend code 
+interface DropboxFile {
+  name: string;
+  link: string;
+}
+
+declare global {
+  interface Window {
+    Dropbox?: {
+      choose: (options: {
+        linkType: string;
+        multiselect: boolean;
+        extensions: string[];
+        success: (files: DropboxFile[]) => void;
+        error: (error: unknown) => void;
+      }) => void;
+    };
+    gapi?: {
+      load: (api: string, callback: () => void) => void;
+      client: {
+        init: (config: { apiKey: string; discoveryDocs: string[] }) => Promise<void>;
+      };
+    };
+    google?: {
+      picker: {
+        View: new (id: string) => { setMimeTypes: (mimeTypes: string) => void };
+        PickerBuilder: new () => {
+          addView: (view: any) => GooglePickerBuilder;
+          setOAuthToken: (token: string) => GooglePickerBuilder;
+          setDeveloperKey: (key: string) => GooglePickerBuilder;
+          setOrigin: (origin: string) => GooglePickerBuilder;
+          setCallback: (callback: (data: GooglePickerResponse) => void) => GooglePickerBuilder;
+          build: () => { setVisible: (visible: boolean) => void };
+        };
+        Action: { PICKED: string };
+        ViewId: { DOCS: string };
+      };
+      accounts?: {
+        oauth2: {
+          initTokenClient: (config: {
+            client_id: string;
+            scope: string;
+            callback: (response: { access_token?: string; error?: string }) => void;
+          }) => { requestAccessToken: () => void };
+        };
+      };
+    };
+  }
+}
+
+interface GooglePickerBuilder {
+  addView: (view: any) => GooglePickerBuilder;
+  setOAuthToken: (token: string) => GooglePickerBuilder;
+  setDeveloperKey: (key: string) => GooglePickerBuilder;
+  setOrigin: (origin: string) => GooglePickerBuilder;
+  setCallback: (callback: (data: GooglePickerResponse) => void) => GooglePickerBuilder;
+  build: () => { setVisible: (visible: boolean) => void };
+}
+
+interface FormatOptions {
+  image: { image: string[] };
+  compressor: { compressor: string[] };
+  pdfs: { pdf_to_image: string[]; document: string[] };
+  audio: { audio: string[] };
+}
+
+type SectionKey = keyof FormatOptions;
+type SubSectionKey<T extends SectionKey> = keyof FormatOptions[T];
+
+interface FileItem<T extends SectionKey = SectionKey> {
+  file: File;
+  showMenu: boolean;
+  section: T;
+  selectedFormat: string;
+  source: 'local' | 'google' | 'dropbox';
+  url: string;
+  id: string;
+  selectedSubSection: SubSectionKey<T>;
+}
+
+interface ConvertedFile {
+  name: string;
+  url: string;
+  loading: boolean;
+  converting: boolean;
+  originalId: string;
+}
+
+interface ConversionFormat {
+  name: string;
+  target: string;
+  type: SectionKey;
+  subSection: string;
+  id: string;
+}
+
+interface ConversionResponse {
+  files: Array<{ name: string; path: string }>;
+}
+
+const supportedExtensions = [
+  '.bmp', '.eps', '.ico', '.svg', '.tga', '.wbmp',
+  '.pdf',
+  '.aac', '.aiff', '.m4v', '.mmf', '.wma', '.3g2',
+];
+
+export default function Dropbox() {
+  const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined;
+  const GOOGLE_API_KEY = import.meta.env.VITE_GOOGLE_API_KEY as string | undefined;
+  const DROPBOX_APP_KEY = import.meta.env.VITE_DROPBOX_APP_KEY as string | undefined;
+  const API_URL = (import.meta.env.VITE_API_URL as string) || 'http://localhost:5001';
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const pickerLoaded = useRef(false);
+  const [selectedFiles, setSelectedFiles] = useState<FileItem[]>([]);
+  const [isConverting, setIsConverting] = useState(false);
+  const [convertedFiles, setConvertedFiles] = useState<ConvertedFile[]>([]);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [accessToken, setAccessToken] = useState<string | null>(null);
+
+  // Validate environment variables
+  useEffect(() => {
+    if (!GOOGLE_CLIENT_ID || !GOOGLE_API_KEY) {
+      setErrorMessage('Google API configuration is missing. Please contact support.');
+      return;
+    }
+    if (!DROPBOX_APP_KEY) {
+      setErrorMessage('Dropbox configuration is missing. Please contact support.');
+      return;
+    }
+  }, [GOOGLE_CLIENT_ID, GOOGLE_API_KEY, DROPBOX_APP_KEY]);
+
+  // Load Google APIs and Dropbox SDK
+  useEffect(() => {
+    const loadGapiAndGis = () => {
+      const gapiScript = document.createElement('script');
+      gapiScript.src = 'https://apis.google.com/js/api.js';
+      gapiScript.async = true;
+      gapiScript.onload = () => {
+        if (!window.gapi) {
+          setErrorMessage('Failed to load Google API script. Check your network and try again.');
+          return;
+        }
+        window.gapi.load('client:picker', async () => {
+          try {
+            if (!GOOGLE_API_KEY) throw new Error('Google API key is missing');
+            await window.gapi.client.init({
+              apiKey: GOOGLE_API_KEY,
+              discoveryDocs: ['https://www.googleapis.com/discovery/v1/apis/drive/v3/rest'],
+            });
+            pickerLoaded.current = true;
+            console.log('Google API client initialized');
+          } catch (err) {
+            console.error('Failed to initialize gapi client:', err);
+            setErrorMessage('Failed to initialize Google API client. Please try again later.');
+          }
+        });
+      };
+      gapiScript.onerror = () => {
+        setErrorMessage('Failed to load Google API script. Check your network and try again.');
+      };
+      document.body.appendChild(gapiScript);
+
+      const gisScript = document.createElement('script');
+      gisScript.src = 'https://accounts.google.com/gsi/client';
+      gisScript.async = true;
+      gisScript.onload = () => {
+        console.log('Google Identity Services loaded');
+      };
+      gisScript.onerror = () => {
+        setErrorMessage('Failed to load Google Identity Services. Check your network and try again.');
+      };
+      document.body.appendChild(gisScript);
+
+      const dropboxScript = document.createElement('script');
+      dropboxScript.src = 'https://www.dropbox.com/static/api/2/dropins.js';
+      dropboxScript.id = 'dropboxjs';
+      dropboxScript.setAttribute('data-app-key', DROPBOX_APP_KEY || '');
+      dropboxScript.async = true;
+      dropboxScript.onerror = () => {
+        setErrorMessage('Failed to load Dropbox SDK. Check your network and try again.');
+      };
+      document.body.appendChild(dropboxScript);
+    };
+
+    loadGapiAndGis();
+  }, [GOOGLE_API_KEY, DROPBOX_APP_KEY]);
+
+  // Map file extension to format section
+  const getFormatSection = (ext: string): SectionKey => {
+    ext = ext.toLowerCase();
+    if (ext === 'pdf') return 'pdfs';
+    if (['bmp', 'eps', 'ico', 'svg', 'tga', 'wbmp'].includes(ext)) return 'image';
+    if (['aac', 'aiff', 'm4v', 'mmf', 'wma', '3g2'].includes(ext)) return 'audio';
+    return 'image';
+  };
+
+  // Format options configuration
+  const formatOptions: FormatOptions = {
+    image: {
+      image: ['BMP', 'EPS', 'ICO', 'SVG', 'TGA', 'WBMP'],
+    },
+    compressor: {
+      compressor: ['SVG'],
+    },
+    pdfs: {
+      pdf_to_image: ['JPG', 'PNG', 'GIF'],
+      document: ['DOCX'],
+    },
+    audio: {
+      audio: ['AAC', 'AIFF', 'M4V', 'MMF', 'WMA', '3G2'],
+    },
+  };
+
+  // Trigger Google Drive Picker
+  const handleGoogleDriveUpload = () => {
+    if (!pickerLoaded.current) {
+      setErrorMessage('Google Picker is not ready. Please try again shortly.');
+      return;
+    }
+    if (!GOOGLE_CLIENT_ID) {
+      setErrorMessage('Google API configuration is missing. Please contact support.');
+      return;
+    }
+    triggerGoogleSignIn();
+  };
+
+  // Initialize Google Sign-In
+  const triggerGoogleSignIn = () => {
+    if (!window.google?.accounts?.oauth2) {
+      setErrorMessage('Google Identity Services not loaded. Please try again later.');
+      return;
+    }
+
+    const tokenClient = window.google.accounts.oauth2.initTokenClient({
+      client_id: GOOGLE_CLIENT_ID,
+      scope: 'https://www.googleapis.com/auth/drive.readonly',
+      callback: (response: { access_token?: string; error?: string }) => {
+        if (response.access_token) {
+          console.log('Received access token');
+          setAccessToken(response.access_token);
+          createGooglePicker(response.access_token);
+        } else {
+          console.error('No access token returned:', response.error);
+          setErrorMessage('Google Sign-in failed. Please try again.');
+        }
+      },
+    });
+
+    tokenClient.requestAccessToken();
+  };
+
+  // Create Google Picker
+  const createGooglePicker = (token: string) => {
+    if (!pickerLoaded.current || !window.google?.picker || !window.google.picker.PickerBuilder) {
+      setErrorMessage('Google Picker API not loaded. Please try again later.');
+      return;
+    }
+
+    try {
+      const view = new window.google.picker.View(window.google.picker.ViewId.DOCS);
+      view.setMimeTypes(supportedExtensions.map(ext => `application/${ext.slice(1)},image/${ext.slice(1)},audio/${ext.slice(1)}`).join(','));
+      if (!GOOGLE_API_KEY) throw new Error('Google API key is missing');
+      const picker = new window.google.picker.PickerBuilder()
+        .addView(view)
+        .setOAuthToken(token)
+        .setDeveloperKey(GOOGLE_API_KEY)
+        .setOrigin(window.location.origin)
+        .setCallback((data: GooglePickerResponse) => handlePickerResponse(data, token))
+        .build();
+      picker.setVisible(true);
+    } catch (err) {
+      console.error('Failed to create Google Picker:', err);
+      setErrorMessage('Failed to initialize Google Picker. Please try again.');
+    }
+  };
+
+  // Handle Google Picker response
+  const handlePickerResponse = async (data: GooglePickerResponse, token: string) => {
+    if (!window.google?.picker?.Action.PICKED || data.action !== window.google.picker.Action.PICKED) return;
+
+    const docs = data.docs;
+    if (selectedFiles.length + docs.length > 5) {
+      setErrorMessage('Maximum 5 files allowed.');
+      return;
+    }
+
+    if (!token) {
+      setErrorMessage('Authentication expired. Please sign in again.');
+      triggerGoogleSignIn();
+      return;
+    }
+
+    const newFiles = await Promise.all(
+      docs.map(async (doc) => {
+        try {
+          const response = await fetch(`https://www.googleapis.com/drive/v3/files/${doc.id}?alt=media`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            console.error('Google Drive API error:', errorData);
+            if (response.status === 401) {
+              setErrorMessage('Authentication expired. Please sign in again.');
+              setAccessToken(null);
+              triggerGoogleSignIn();
+              return null;
+            }
+            throw new Error(`Failed to fetch file: ${doc.name}`);
+          }
+          const blob = await response.blob();
+          const ext = doc.name.split('.').pop()?.toLowerCase() || '';
+          if (!supportedExtensions.includes(`.${ext}`)) {
+            console.error(`Unsupported file extension: ${ext}`);
+            return null;
+          }
+          const section = getFormatSection(ext);
+          const subSection = Object.keys(formatOptions[section])[0] as SubSectionKey<typeof section>;
+          return {
+            file: new File([blob], doc.name, { type: blob.type }),
+            showMenu: false,
+            section,
+            selectedFormat: '',
+            source: 'google' as const,
+            url: doc.url,
+            id: `${doc.name}_${Date.now()}_${Math.random().toString(36).substring(2, 15)}`,
+            selectedSubSection: subSection,
+          };
+        } catch (err) {
+          console.error(`Failed to fetch Google Drive file ${doc.name}:`, err);
+          return null;
+        }
+      })
+    );
+
+    const validFiles = newFiles.filter((f): f is FileItem => f !== null);
+    if (validFiles.length < docs.length) {
+      setErrorMessage('Some files could not be loaded. Ensure they are supported formats.');
+    }
+    setSelectedFiles((prev) => [...prev, ...validFiles]);
+    setConvertedFiles([]);
+    setErrorMessage(null);
+  };
+
+  // Handle local file upload
+  const handleLocalFileClick = () => {
+    if (fileInputRef.current) {
+      fileInputRef.current.click();
+    }
+  };
+
+  const handleLocalFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    if (selectedFiles.length + files.length > 5) {
+      setErrorMessage('Maximum 5 files allowed.');
+      return;
+    }
+
+    const newFiles: FileItem[] = [];
+    for (const f of Array.from(files)) {
+      const ext = f.name.split('.').pop()?.toLowerCase() || '';
+      if (!supportedExtensions.includes(`.${ext}`)) {
+        setErrorMessage(`Unsupported file type: ${ext}. Supported types: ${supportedExtensions.join(', ')}`);
+        continue;
+      }
+      const section = getFormatSection(ext);
+      const subSection = Object.keys(formatOptions[section])[0] as SubSectionKey<typeof section>;
+      newFiles.push({
+        file: f,
+        showMenu: false,
+        section,
+        selectedFormat: '',
+        source: 'local' as const,
+        id: `${f.name}_${Date.now()}_${Math.random().toString(36).substring(2, 15)}`,
+        url: '',
+        selectedSubSection: subSection,
+      });
+    }
+
+    if (newFiles.length > 0) {
+      setSelectedFiles((prev) => [...prev, ...newFiles]);
+      setConvertedFiles([]);
+      setErrorMessage(null);
+    }
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  // Handle Dropbox upload
+  const handleDropboxUpload = () => {
+    if (!window.Dropbox) {
+      setErrorMessage('Dropbox SDK not loaded. Please try again later.');
+      return;
+    }
+    if (!DROPBOX_APP_KEY) {
+      setErrorMessage('Dropbox configuration is missing. Please contact support.');
+      return;
+    }
+
+    window.Dropbox.choose({
+      linkType: 'direct',
+      multiselect: true,
+      extensions: supportedExtensions,
+      success: async (files: DropboxFile[]) => {
+        if (selectedFiles.length + files.length > 5) {
+          setErrorMessage('Maximum 5 files allowed.');
+          return;
+        }
+        const newFiles: FileItem[] = [];
+        for (const f of files) {
+          try {
+            const response = await fetch(f.link);
+            if (!response.ok) throw new Error(`Failed to fetch Dropbox file: ${f.name}`);
+            const blob = await response.blob();
+            const ext = f.name.split('.').pop()?.toLowerCase() || '';
+            if (!supportedExtensions.includes(`.${ext}`)) {
+              console.error(`Unsupported file extension: ${ext}`);
+              continue;
+            }
+            const section = getFormatSection(ext);
+            const subSection = Object.keys(formatOptions[section])[0] as SubSectionKey<typeof section>;
+            newFiles.push({
+              file: new File([blob], f.name, { type: blob.type }),
+              showMenu: false,
+              section,
+              selectedFormat: '',
+              source: 'dropbox' as const,
+              url: f.link,
+              id: `${f.name}_${Date.now()}_${Math.random().toString(36).substring(2, 15)}`,
+              selectedSubSection: subSection,
+            });
+          } catch (err) {
+            console.error(`Error fetching Dropbox file ${f.name}:`, err);
+            continue;
+          }
+        }
+        if (newFiles.length < files.length) {
+          setErrorMessage('Some files could not be loaded. Ensure they are supported formats.');
+        }
+        if (newFiles.length > 0) {
+          setSelectedFiles((prev) => [...prev, ...newFiles]);
+          setConvertedFiles([]);
+          setErrorMessage(null);
+        }
+      },
+      error: (err: unknown) => {
+        console.error('Dropbox picker error:', err);
+        setErrorMessage('Failed to load files from Dropbox. Please try again.');
+      },
+    });
+  };
+
+  // Toggle format selection menu
+  const toggleMenu = (index: number) => {
+    setSelectedFiles((prev) =>
+      prev.map((item, i) => ({
+        ...item,
+        showMenu: i === index ? !item.showMenu : false,
+      }))
+    );
+  };
+
+  // Remove a selected file
+  const removeFile = (index: number) => {
+    setSelectedFiles((prev) => prev.filter((_, i) => i !== index));
+    setConvertedFiles((prev) => prev.filter((file) => !selectedFiles[index] || file.originalId !== selectedFiles[index].id));
+    setErrorMessage(null);
+  };
+
+  // Select a subsection for format options
+  const selectSubSection = <T extends SectionKey>(index: number, subSection: SubSectionKey<T>) => {
+    setSelectedFiles((prev) =>
+      prev.map((item, i) =>
+        i === index
+          ? { ...item, selectedSubSection: subSection as SubSectionKey<typeof item.section>, selectedFormat: '' }
+          : item
+      )
+    );
+  };
+
+  // Select a format for conversion
+  const selectFormat = <T extends SectionKey>(index: number, format: string, subSection: SubSectionKey<T>) => {
+    setSelectedFiles((prev) =>
+      prev.map((item, i) =>
+        i === index
+          ? { ...item, selectedFormat: `${subSection}:${format.toLowerCase()}`, showMenu: false, selectedSubSection: subSection as SubSectionKey<typeof item.section> }
+          : item
+      )
+    );
+  };
+
+  // Handle file conversion
+  const handleConvert = async () => {
+    if (isConverting) return;
+    if (selectedFiles.length === 0) {
+      setErrorMessage('No files selected for conversion.');
+      return;
+    }
+    if (selectedFiles.some((item) => !item.selectedFormat)) {
+      setErrorMessage('Please select a format for all files.');
+      return;
+    }
+    if (selectedFiles.length > 5) {
+      setErrorMessage('Maximum 5 files allowed.');
+      return;
+    }
+
+    const formats: ConversionFormat[] = selectedFiles.map((item) => {
+      const [subSection, target] = item.selectedFormat.split(':');
+      return {
+        name: item.file.name,
+        target: target.toLowerCase(),
+        type: item.section,
+        subSection,
+        id: item.id,
+      };
+    });
+
+    setConvertedFiles(
+      formats.map((format) => ({
+        name: format.name,
+        url: '',
+        loading: false,
+        converting: true,
+        originalId: format.id,
+      }))
+    );
+
+    setIsConverting(true);
+    setErrorMessage(null);
+
+    const formData = new FormData();
+    selectedFiles.forEach((item) => {
+      formData.append('files', item.file);
+    });
+    formData.append('formats', JSON.stringify(formats));
+
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => {
+        controller.abort(new Error('Conversion request timed out after 120 seconds'));
+      }, 120000);
+
+      const res = await fetch(`${API_URL}/api/convert`, {
+        method: 'POST',
+        body: formData,
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || `Conversion failed with status ${res.status}`);
+      }
+
+      const data: ConversionResponse = await res.json();
+      console.log('Conversion response:', data);
+
+      const converted = await Promise.all(
+        data.files.map(async (file, index) => {
+          try {
+            const fileRes = await fetch(`${API_URL}${file.path}`);
+            if (!fileRes.ok) {
+              throw new Error(`Failed to fetch converted file: ${file.name}`);
+            }
+            const blob = await fileRes.blob();
+            const url = window.URL.createObjectURL(blob);
+            return {
+              name: file.name,
+              url,
+              loading: false,
+              converting: false,
+              originalId: formats[index].id,
+            };
+          } catch (err) {
+            console.error(`Error fetching file ${file.name}:`, err);
+            return null;
+          }
+        })
+      );
+
+      const validConverted = converted.filter((file): file is ConvertedFile => file !== null);
+      setConvertedFiles(validConverted);
+      if (validConverted.length === 0) {
+        setErrorMessage('No files were converted successfully. Check file formats and try again.');
+      } else if (validConverted.length < converted.length) {
+        setErrorMessage('Some files failed to convert or download. Please check file formats and try again.');
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Unknown error during conversion';
+      console.error('Conversion error:', msg);
+      setErrorMessage(
+        msg.includes('timeout')
+          ? 'Conversion timed out after 120 seconds. Try smaller files or check server status.'
+          : `Conversion failed: ${msg}`
+      );
+      setConvertedFiles((prev) =>
+        prev.map((file) => ({ ...file, converting: false }))
+      );
+    } finally {
+      setIsConverting(false);
+    }
+  };
+
+  // Handle file download
+  const handleDownload = async (url: string, name: string, index: number) => {
+    setConvertedFiles((prev) =>
+      prev.map((file, i) => (i === index ? { ...file, loading: true } : file))
+    );
+    try {
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      console.log(`Downloaded file: ${name}`);
+    } catch (err: unknown) {
+      console.error(`Error downloading file ${name}:`, err);
+      setErrorMessage(`Failed to download ${name}. Please try again.`);
+    } finally {
+      setConvertedFiles((prev) =>
+        prev.map((file, i) => (i === index ? { ...file, loading: false } : file))
+      );
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-gray-100 flex flex-col items-center justify-center">
+      <div className="flex flex-col items-center justify-center space-y-4 w-full max-w-3xl p-6">
+        <div className="bg-white rounded-lg shadow-lg p-6 w-full">
+          <div className="bg-red-500 text-white rounded-md px-8 py-4 flex items-center justify-center space-x-6">
+            <span className="font-semibold text-lg">Choose Files</span>
+            <FaFolderOpen
+              onClick={handleLocalFileClick}
+              title="Upload from device"
+              className="text-2xl cursor-pointer hover:scale-110 transition"
+            />
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              onChange={handleLocalFileChange}
+              style={{ display: 'none' }}
+              accept={supportedExtensions.join(',')}
+            />
+            <FaDropbox
+              onClick={handleDropboxUpload}
+              title="Upload from Dropbox"
+              className="text-2xl cursor-pointer hover:scale-110 transition"
+            />
+            <FaGoogleDrive
+              onClick={handleGoogleDriveUpload}
+              title="Upload from Google Drive"
+              className="text-2xl cursor-pointer hover:scale-110 transition"
+            />
+          </div>
+          <div className="mt-3 text-sm text-gray-500 text-center">
+            100 MB maximum file size and up to 5 files.
+          </div>
+          {errorMessage && (
+            <div className="mt-4 text-red-600 text-sm font-medium text-center">{errorMessage}</div>
+          )}
+          <div className="mt-6 space-y-3">
+            {selectedFiles.map((item, index) => {
+              const convertedFile = convertedFiles.find((file) => file.originalId === item.id);
+              const subSection = item.selectedSubSection || Object.keys(formatOptions[item.section])[0];
+              return (
+                <div
+                  key={item.id}
+                  className="relative bg-white rounded-md px-4 py-3 shadow border"
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3 overflow-hidden">
+                      {convertedFile?.converting ? (
+                        <div className="flex items-center gap-2">
+                          <div className="w-5 h-5 border-2 border-t-2 border-gray-300 border-t-red-500 rounded-full animate-spin" />
+                          <span className="text-sm text-gray-500" aria-live="polite">Converting...</span>
+                        </div>
+                      ) : (
+                        <span className="text-xl">📄</span>
+                      )}
+                      <p className="truncate max-w-[200px] text-sm font-medium">{item.file.name}</p>
+                      <span className="text-sm text-gray-500">to</span>
+                      <button
+                        className="bg-gray-200 hover:bg-gray-300 text-sm rounded-md px-3 py-1"
+                        onClick={() => toggleMenu(index)}
+                        disabled={convertedFile?.converting}
+                      >
+                        {item.selectedFormat.split(':')[1]?.toUpperCase() || 'Select format'}
+                      </button>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {convertedFile && !convertedFile.converting && (
+                        <button
+                          onClick={() => handleDownload(convertedFile.url, convertedFile.name, convertedFiles.findIndex((file) => file.originalId === item.id))}
+                          disabled={convertedFile.loading}
+                          className="flex items-center gap-2 bg-yellow-500 text-white px-4 py-1 rounded-md text-sm font-semibold hover:bg-yellow-600 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          <FiDownload className="text-base" />
+                          {convertedFile.loading ? 'Downloading...' : 'Download'}
+                        </button>
+                      )}
+                      <button
+                        className="text-gray-500 hover:text-red-600 transition text-xl"
+                        onClick={() => removeFile(index)}
+                        disabled={convertedFile?.converting}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  </div>
+                  {item.showMenu && (
+                    <div className="absolute top-full mt-2 right-0 bg-gray-800 text-white rounded-md p-4 w-[300px] shadow-xl text-sm font-medium z-50 flex">
+                      <div className="flex flex-col border-r border-gray-600 pr-3 min-w-[100px]">
+                        {Object.keys(formatOptions[item.section]).map((subSection) => (
+                          <button
+                            key={subSection}
+                            className={`text-left px-2 py-1 rounded hover:bg-gray-700 ${
+                              item.selectedSubSection === subSection ? 'text-white font-bold' : 'text-gray-400'
+                            }`}
+                            onClick={() => selectSubSection(index, subSection as SubSectionKey<typeof item.section>)}
+                          >
+                            {subSection.charAt(0).toUpperCase() + subSection.slice(1).replace('_', ' ')}
+                          </button>
+                        ))}
+                      </div>
+                      <div className="flex-1 pl-4">
+                        <div className="grid grid-cols-2 gap-2">
+                          {(formatOptions[item.section][subSection as keyof FormatOptions[typeof item.section]] as string[]).map((format) => (
+                            <button
+                              key={format}
+                              className="bg-gray-700 hover:bg-red-600 transition px-3 py-2 rounded text-white text-xs"
+                              onClick={() => selectFormat(index, format, subSection as SubSectionKey<typeof item.section>)}
+                            >
+                              {format}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+        <div className="flex flex-col items-center space-y-2">
+          <p className="text-gray-600 text-center mt-4">
+            Ensure you have uploaded valid files, otherwise conversion may fail.
+          </p>
+          <button
+            onClick={handleConvert}
+            disabled={isConverting || selectedFiles.length === 0}
+            className={`flex items-center gap-2 bg-red-500 text-white px-6 py-2 rounded-md text-base font-semibold hover:bg-red-600 transition ${
+              isConverting || selectedFiles.length === 0 ? 'opacity-50 cursor-not-allowed' : ''
+            }`}
+          >
+            <FiArrowRight className="text-lg" />
+            {isConverting ? 'Converting...' : 'Convert Files'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+i have .env file 
+VITE_GOOGLE_CLIENT_ID=866725812936-fvjl5btdg8d8s8mc03aihrvs3tmj3q6h.apps.googleusercontent.com
+VITE_GOOGLE_API_KEY=AIzaSyDtxORXGl-d3mMhG4TKBGS90scPCX7JGyM
+VITE_DROPBOX_APP_KEY=2434iawyecdjpxc
+VITE_API_URL=https://nion-rqsx.onrender.com 
+Access to fetch at 'https://nion-rqsx.onrender.com/api/convert' from origin 'http://localhost:5173' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.Understand this error
+Dropbox.tsx:554  POST https://nion-rqsx.onrender.com/api/convert net::ERR_FAILED 404 (Not Found)
+handleConvert @ Dropbox.tsx:554
+executeDispatch @ react-dom_client.js?v=9e050949:11734
+runWithFiberInDEV @ react-dom_client.js?v=9e050949:1483
+processDispatchQueue @ react-dom_client.js?v=9e050949:11770
+(anonymous) @ react-dom_client.js?v=9e050949:12180
+batchedUpdates$1 @ react-dom_client.js?v=9e050949:2626
+dispatchEventForPluginEventSystem @ react-dom_client.js?v=9e050949:11875
+dispatchEvent @ react-dom_client.js?v=9e050949:14790
+dispatchDiscreteEvent @ react-dom_client.js?v=9e050949:14771
+<button>
+exports.jsxDEV @ react_jsx-dev-runtime.js?v=9e050949:248
+Dropbox @ Dropbox.tsx:763
+react-stack-bottom-frame @ react-dom_client.js?v=9e050949:17422
+renderWithHooksAgain @ react-dom_client.js?v=9e050949:4279
+renderWithHooks @ react-dom_client.js?v=9e050949:4215
+updateFunctionComponent @ react-dom_client.js?v=9e050949:6617
+beginWork @ react-dom_client.js?v=9e050949:7652
+runWithFiberInDEV @ react-dom_client.js?v=9e050949:1483
+performUnitOfWork @ react-dom_client.js?v=9e050949:10866
+workLoopSync @ react-dom_client.js?v=9e050949:10726
+renderRootSync @ react-dom_client.js?v=9e050949:10709
+performWorkOnRoot @ react-dom_client.js?v=9e050949:10328
+performWorkOnRootViaSchedulerTask @ react-dom_client.js?v=9e050949:11621
+performWorkUntilDeadline @ react-dom_client.js?v=9e050949:34
+<Dropbox>
+exports.jsxDEV @ react_jsx-dev-runtime.js?v=9e050949:248
+Homepage @ Homepage.tsx:13
+react-stack-bottom-frame @ react-dom_client.js?v=9e050949:17422
+renderWithHooksAgain @ react-dom_client.js?v=9e050949:4279
+renderWithHooks @ react-dom_client.js?v=9e050949:4215
+updateFunctionComponent @ react-dom_client.js?v=9e050949:6617
+beginWork @ react-dom_client.js?v=9e050949:7652
+runWithFiberInDEV @ react-dom_client.js?v=9e050949:1483
+performUnitOfWork @ react-dom_client.js?v=9e050949:10866
+workLoopSync @ react-dom_client.js?v=9e050949:10726
+renderRootSync @ react-dom_client.js?v=9e050949:10709
+performWorkOnRoot @ react-dom_client.js?v=9e050949:10328
+performWorkOnRootViaSchedulerTask @ react-dom_client.js?v=9e050949:11621
+performWorkUntilDeadline @ react-dom_client.js?v=9e050949:34
+<Homepage>
+exports.jsxDEV @ react_jsx-dev-runtime.js?v=9e050949:248
+App @ App.tsx:8
+react-stack-bottom-frame @ react-dom_client.js?v=9e050949:17422
+renderWithHooksAgain @ react-dom_client.js?v=9e050949:4279
+renderWithHooks @ react-dom_client.js?v=9e050949:4215
+updateFunctionComponent @ react-dom_client.js?v=9e050949:6617
+beginWork @ react-dom_client.js?v=9e050949:7652
+runWithFiberInDEV @ react-dom_client.js?v=9e050949:1483
+performUnitOfWork @ react-dom_client.js?v=9e050949:10866
+workLoopSync @ react-dom_client.js?v=9e050949:10726
+renderRootSync @ react-dom_client.js?v=9e050949:10709
+performWorkOnRoot @ react-dom_client.js?v=9e050949:10328
+performWorkOnRootViaSchedulerTask @ react-dom_client.js?v=9e050949:11621
+performWorkUntilDeadline @ react-dom_client.js?v=9e050949:34
+<App>
+exports.jsxDEV @ react_jsx-dev-runtime.js?v=9e050949:248
+Root @ main.tsx:30
+react-stack-bottom-frame @ react-dom_client.js?v=9e050949:17422
+renderWithHooksAgain @ react-dom_client.js?v=9e050949:4279
+renderWithHooks @ react-dom_client.js?v=9e050949:4215
+updateFunctionComponent @ react-dom_client.js?v=9e050949:6617
+beginWork @ react-dom_client.js?v=9e050949:7652
+runWithFiberInDEV @ react-dom_client.js?v=9e050949:1483
+performUnitOfWork @ react-dom_client.js?v=9e050949:10866
+workLoopSync @ react-dom_client.js?v=9e050949:10726
+renderRootSync @ react-dom_client.js?v=9e050949:10709
+performWorkOnRoot @ react-dom_client.js?v=9e050949:10328
+performWorkOnRootViaSchedulerTask @ react-dom_client.js?v=9e050949:11621
+performWorkUntilDeadline @ react-dom_client.js?v=9e050949:34
+<Root>
+exports.jsxDEV @ react_jsx-dev-runtime.js?v=9e050949:248
+(anonymous) @ main.tsx:37Understand this error
+Dropbox.tsx:602 Conversion error: Failed to fetch

@@ -21,39 +21,48 @@ const app = express();
 const port = process.env.PORT || 5001;
 const conversionTimeout = parseInt(process.env.CONVERSION_TIMEOUT) || 120000;
 
-// Validate environment variables Secondary
-if (!process.env.FRONTEND_URL) {
-  console.warn('FRONTEND_URL not set in environment variables. Defaulting to localhost:5173');
-}
+// Log environment variables for debugging
+console.log('Environment variables:', {
+  PORT: process.env.PORT,
+  FRONTEND_URL: process.env.FRONTEND_URL,
+  CONVERSION_TIMEOUT: process.env.CONVERSION_TIMEOUT,
+  NODE_ENV: process.env.NODE_ENV,
+});
 
 // Configure CORS with multiple allowed origins
-const allowedOrigins = [
-  process.env.FRONTEND_URL || 'http://localhost:5173',
-  'https://your-frontend-domain.com', // Replace with your production frontend URL
-];
+const allowedOrigins = process.env.FRONTEND_URL
+  ? process.env.FRONTEND_URL.split(',').map(url => url.trim())
+  : ['http://localhost:5173'];
+allowedOrigins.push('http://localhost:5173'); // Ensure localhost is always allowed
+allowedOrigins.push('https://your-frontend-domain-on-render.com'); // Production frontend
 
 const corsOptions = {
   origin: (origin, callback) => {
     if (!origin || allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
-      console.error(`CORS request blocked from origin: ${origin}`);
+      console.error(`CORS request blocked from origin: ${origin}. Allowed origins: ${allowedOrigins.join(', ')}`);
       callback(new Error('Not allowed by CORS'));
     }
   },
   methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type'],
-  credentials: true, // Allow cookies/auth headers if needed
+  credentials: true,
   preflightContinue: false,
-  optionsSuccessStatus: 204, // Standard status for OPTIONS requests
+  optionsSuccessStatus: 204,
 };
 
 app.use(cors(corsOptions));
 
-// Middleware to log incoming requests for debugging
+// Middleware to log incoming requests
 app.use((req, res, next) => {
-  console.log(`${req.method} ${req.url} from ${req.get('Origin')}`);
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.url} from ${req.get('Origin') || 'unknown'}`);
   next();
+});
+
+// Test endpoint to verify server is running
+app.get('/api/test', (req, res) => {
+  res.status(200).json({ message: 'Server is running', allowedOrigins });
 });
 
 // Initialize FileConverter
@@ -98,6 +107,7 @@ async function ensureDirectories() {
   try {
     await fsPromises.mkdir(uploadsDir, { recursive: true });
     await fsPromises.mkdir(convertedDir, { recursive: true });
+    console.log('Directories created:', { uploadsDir, convertedDir });
   } catch (err) {
     console.error('Error creating directories:', err.message);
     throw new Error('Failed to initialize server directories.');
@@ -106,12 +116,15 @@ async function ensureDirectories() {
 
 // Health check endpoint
 app.get('/health', (req, res) => {
-  res.status(200).json({ status: 'OK' });
+  res.status(200).json({ status: 'OK', allowedOrigins });
 });
 
 // Conversion route
 app.post('/api/convert', upload.array('files', 5), async (req, res) => {
-  console.log('Received /api/convert request');
+  console.log('Received /api/convert request', {
+    files: req.files ? req.files.map(f => f.originalname) : [],
+    body: req.body,
+  });
   let tempFiles = req.files ? req.files.map(f => f.path) : [];
   try {
     await ensureDirectories();
@@ -119,6 +132,7 @@ app.post('/api/convert', upload.array('files', 5), async (req, res) => {
     let formats;
     try {
       formats = JSON.parse(req.body.formats || '[]');
+      console.log('Parsed formats:', formats);
     } catch (parseError) {
       console.error('Error parsing formats:', parseError.message);
       return res.status(400).json({ error: 'Invalid formats data. Please provide valid JSON.' });
@@ -223,7 +237,7 @@ app.post('/api/convert', upload.array('files', 5), async (req, res) => {
       })),
     });
   } catch (error) {
-    console.error('Conversion error:', error.message);
+    console.error('Conversion error:', error.message, error.stack);
     res.status(500).json({ error: error.message || 'Conversion failed.' });
   } finally {
     await cleanupFiles(tempFiles.filter(file => file.startsWith(uploadsDir)));
@@ -329,7 +343,7 @@ async function startServer() {
       console.log(`CORS allowed origins: ${allowedOrigins.join(', ')}`);
     });
   } catch (err) {
-    console.error('Failed to start server:', err.message);
+    console.error('Failed to start server:', err.message, err.stack);
     process.exit(1);
   }
 }
