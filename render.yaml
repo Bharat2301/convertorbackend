@@ -11,9 +11,9 @@ services:
       - key: PORT
         value: 5001
       - key: FRONTEND_URL
-        value: http://localhost:5173,https://nion-ochre.vercel.app  # Updated to match live frontend
+        value: http://localhost:5173,https://nion-ochre.vercel.app
       - key: CONVERSION_TIMEOUT
         value: 120000
       - key: NODE_ENV
         value: production
-    preDeployCommand: apt-get update && apt-get install -y ffmpeg libvips-dev poppler-utils
+    preDeployCommand: apt-get update && apt-get install -y ffmpeg libvips-dev poppler-utils graphicsmagick

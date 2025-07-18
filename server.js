@@ -7,6 +7,10 @@ const path = require('path');
 const cors = require('cors');
 const tmp = require('tmp');
 const { FileConverter } = require('multi-format-converter');
+const { exec } = require('child_process');
+const util = require('util');
+
+const execPromise = util.promisify(exec);
 
 // Patch pdf-parse to handle ENOENT error
 let pdfParse;
@@ -21,13 +25,40 @@ const app = express();
 const port = process.env.PORT || 5001;
 const conversionTimeout = parseInt(process.env.CONVERSION_TIMEOUT) || 120000;
 
-// Log environment variables for debugging
-console.log('Environment variables:', {
-  PORT: process.env.PORT,
-  FRONTEND_URL: process.env.FRONTEND_URL,
-  CONVERSION_TIMEOUT: process.env.CONVERSION_TIMEOUT,
-  NODE_ENV: process.env.NODE_ENV,
-});
+// Check for GraphicsMagick/ImageMagick availability
+async function checkGraphicsMagick() {
+  try {
+    await execPromise('gm version');
+    console.log('GraphicsMagick is installed and available');
+    return 'GraphicsMagick';
+  } catch (err) {
+    console.warn('GraphicsMagick not found:', err.message);
+    try {
+      await execPromise('convert -version');
+      console.log('ImageMagick is installed and available');
+      return 'ImageMagick';
+    } catch (err) {
+      console.error('ImageMagick not found:', err.message);
+      return null;
+    }
+  }
+}
+
+// Log environment variables and GraphicsMagick/ImageMagick status
+(async () => {
+  console.log('Environment variables:', {
+    PORT: process.env.PORT,
+    FRONTEND_URL: process.env.FRONTEND_URL,
+    CONVERSION_TIMEOUT: process.env.CONVERSION_TIMEOUT,
+    NODE_ENV: process.env.NODE_ENV,
+  });
+  const graphicsTool = await checkGraphicsMagick();
+  if (!graphicsTool) {
+    console.error('Critical: Neither GraphicsMagick nor ImageMagick is installed. PDF-to-image conversions will fail.');
+  } else {
+    console.log(`Using ${graphicsTool} for image conversions`);
+  }
+})();
 
 // Configure CORS with multiple allowed origins
 const allowedOrigins = [
@@ -231,13 +262,17 @@ app.post('/api/convert', upload.array('files', 5), async (req, res) => {
             break;
           case 'pdfs':
             if (['jpg', 'png', 'gif'].includes(outputExt)) {
-              await converter.pdfToImage({ input: inputPath, output: convertedDir, format: outputExt });
-              const outputBaseName = path.basename(inputPath, '.pdf');
-              const generatedPath = path.join(convertedDir, `${outputBaseName}-1.${outputExt}`);
-              if (await fsPromises.access(generatedPath).then(() => true).catch(() => false)) {
-                await fsPromises.rename(generatedPath, outputPath);
-              } else {
-                throw new Error(`PDF to image output not found: ${generatedPath}`);
+              try {
+                await converter.pdfToImage({ input: inputPath, output: convertedDir, format: outputExt });
+                const outputBaseName = path.basename(inputPath, '.pdf');
+                const generatedPath = path.join(convertedDir, `${outputBaseName}-1.${outputExt}`);
+                if (await fsPromises.access(generatedPath).then(() => true).catch(() => false)) {
+                  await fsPromises.rename(generatedPath, outputPath);
+                } else {
+                  throw new Error(`PDF to image output not found: ${generatedPath}`);
+                }
+              } catch (pdfError) {
+                throw new Error(`PDF to image conversion failed for ${inputPath} to ${convertedDir} (${outputExt}): ${pdfError.message}`);
               }
             } else if (outputExt === 'docx') {
               await converter.pdfToWord({ input: inputPath, output: outputPath });
