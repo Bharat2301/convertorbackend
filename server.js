@@ -10,7 +10,7 @@ const { FileConverter } = require('multi-format-converter');
 const imgToPDF = require('image-to-pdf');
 const { exec } = require('child_process');
 const util = require('util');
-const fileType = require('file-type');
+const { fileTypeFromBuffer } = require('file-type'); // Updated import for file-type v21.0.0
 
 const execPromise = util.promisify(exec);
 
@@ -151,7 +151,7 @@ try {
 
 // Supported formats
 const supportedFormats = {
-  image: ['bmp', 'eps', 'ico', 'svg', 'tga', 'wbmp', 'jpg', 'png', 'gif', 'pdf'], // Added 'pdf'
+  image: ['bmp', 'eps', 'ico', 'svg', 'tga', 'wbmp', 'jpg', 'png', 'gif', 'pdf'],
   compressor: ['svg', 'jpg', 'png'],
   pdfs: ['jpg', 'png', 'gif', 'docx', 'pdf'],
   audio: ['aac', 'aiff', 'm4v', 'mmf', 'wma', '3g2'],
@@ -206,7 +206,7 @@ app.get('/health', (req, res) => {
 async function validateImage(inputPath) {
   try {
     const buffer = await fsPromises.readFile(inputPath);
-    const type = await fileType.fromBuffer(buffer);
+    const type = await fileTypeFromBuffer(buffer); // Updated for file-type v21.0.0
     if (!type || !supportedImageToPdfFormats.includes(type.ext.toLowerCase())) {
       throw new Error(`Invalid or unsupported image format: ${type ? type.ext : 'unknown'}. Supported formats: ${supportedImageToPdfFormats.join(', ')}`);
     }
