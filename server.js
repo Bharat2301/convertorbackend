@@ -10,6 +10,7 @@ const { FileConverter } = require('multi-format-converter');
 const imgToPDF = require('image-to-pdf');
 const { exec } = require('child_process');
 const util = require('util');
+const fileType = require('file-type');
 
 const execPromise = util.promisify(exec);
 
@@ -26,7 +27,7 @@ const app = express();
 const port = process.env.PORT || 5001;
 const conversionTimeout = parseInt(process.env.CONVERSION_TIMEOUT) || 120000;
 
-// Check for GraphicsMagick/ImageMagick and poppler-utils availability
+// Check for GraphicsMagick/ImageMagick, poppler-utils, and file-type availability
 async function checkDependencies() {
   const checks = [
     { name: 'GraphicsMagick', command: 'gm version' },
@@ -45,6 +46,17 @@ async function checkDependencies() {
       results[name] = false;
     }
   }
+
+  // Check if file-type is installed (Node module, not system command)
+  try {
+    require('file-type');
+    console.log('file-type module is installed and available');
+    results['file-type'] = true;
+  } catch (err) {
+    console.warn('file-type module not found:', err.message);
+    results['file-type'] = false;
+  }
+
   return results;
 }
 
@@ -62,6 +74,9 @@ async function checkDependencies() {
   }
   if (!dependencies['ImageMagick']) {
     console.error('Critical: ImageMagick is not installed. GIF conversions will fail.');
+  }
+  if (!dependencies['file-type']) {
+    console.error('Critical: file-type module is not installed. Image validation will fail.');
   }
 })();
 
@@ -142,6 +157,9 @@ const supportedFormats = {
   audio: ['aac', 'aiff', 'm4v', 'mmf', 'wma', '3g2'],
 };
 
+// Supported image formats for image-to-pdf
+const supportedImageToPdfFormats = ['jpg', 'jpeg', 'png'];
+
 const allFormats = [
   ...supportedFormats.image,
   ...supportedFormats.compressor,
@@ -184,18 +202,48 @@ app.get('/health', (req, res) => {
   res.status(200).json({ status: 'OK', allowedOrigins: uniqueAllowedOrigins, timestamp: new Date().toISOString() });
 });
 
+// Validate image file
+async function validateImage(inputPath) {
+  try {
+    const buffer = await fsPromises.readFile(inputPath);
+    const type = await fileType.fromBuffer(buffer);
+    if (!type || !supportedImageToPdfFormats.includes(type.ext.toLowerCase())) {
+      throw new Error(`Invalid or unsupported image format: ${type ? type.ext : 'unknown'}. Supported formats: ${supportedImageToPdfFormats.join(', ')}`);
+    }
+    console.log(`Image validation successful for ${inputPath}: ${type.ext}`);
+    return true;
+  } catch (err) {
+    console.error(`Image validation failed for ${inputPath}: ${err.message}`);
+    return false;
+  }
+}
+
 // Image to PDF conversion helper
 async function convertImageToPDF(inputPath, outputPath) {
   try {
+    // Validate image format
+    const isValidImage = await validateImage(inputPath);
+    if (!isValidImage) {
+      throw new Error(`Invalid image file: ${inputPath}`);
+    }
+
     const imgStream = fs.createReadStream(inputPath);
     const pdfStream = fs.createWriteStream(outputPath);
     await new Promise((resolve, reject) => {
       imgToPDF([inputPath], imgToPDF.sizes.A4).pipe(pdfStream);
-      pdfStream.on('finish', resolve);
-      pdfStream.on('error', reject);
-      imgStream.on('error', reject);
+      pdfStream.on('finish', () => {
+        console.log(`Converted image to PDF: ${outputPath}`);
+        resolve();
+      });
+      pdfStream.on('error', (err) => {
+        console.error(`PDF stream error: ${err.message}`);
+        reject(new Error(`Failed to write PDF: ${err.message}`));
+      });
+      imgStream.on('error', (err) => {
+        console.error(`Image stream error: ${err.message}`);
+        reject(new Error(`Failed to read image: ${err.message}`));
+      });
     });
-    console.log(`Converted image to PDF: ${outputPath}`);
   } catch (err) {
     console.error(`Image to PDF conversion failed: ${err.message}`);
     throw new Error(`Failed to convert image to PDF: ${err.message}`);
@@ -291,11 +339,16 @@ app.post('/api/convert', upload.array('files', 5), async (req, res) => {
         throw new Error(`Input file not found: ${file.originalname}`);
       }
 
-      // Validate PDF for pdfs type conversions
+      // Validate input based on conversion type
       if (conversionType === 'pdfs' && inputExt === 'pdf') {
         const isValidPDF = await validatePDF(inputPath);
         if (!isValidPDF) {
           throw new Error(`Invalid or corrupted PDF file: ${file.originalname}`);
+        }
+      } else if (conversionType === 'image' && outputExt === 'pdf') {
+        const isValidImage = await validateImage(inputPath);
+        if (!isValidImage) {
+          throw new Error(`Invalid or unsupported image file: ${file.originalname}`);
         }
       }
 
