@@ -26,26 +26,29 @@ const app = express();
 const port = process.env.PORT || 5001;
 const conversionTimeout = parseInt(process.env.CONVERSION_TIMEOUT) || 120000;
 
-// Check for GraphicsMagick/ImageMagick availability
-async function checkGraphicsMagick() {
-  try {
-    await execPromise('gm version');
-    console.log('GraphicsMagick is installed and available');
-    return 'GraphicsMagick';
-  } catch (err) {
-    console.warn('GraphicsMagick not found:', err.message);
+// Check for GraphicsMagick/ImageMagick and poppler-utils availability
+async function checkDependencies() {
+  const checks = [
+    { name: 'GraphicsMagick', command: 'gm version' },
+    { name: 'ImageMagick', command: 'convert -version' },
+    { name: 'poppler-utils', command: 'pdftoppm -v' },
+  ];
+  const results = {};
+
+  for (const { name, command } of checks) {
     try {
-      await execPromise('convert -version');
-      console.log('ImageMagick is installed and available');
-      return 'ImageMagick';
+      await execPromise(command);
+      console.log(`${name} is installed and available`);
+      results[name] = true;
     } catch (err) {
-      console.error('ImageMagick not found:', err.message);
-      return null;
+      console.warn(`${name} not found:`, err.message);
+      results[name] = false;
     }
   }
+  return results;
 }
 
-// Log environment variables and GraphicsMagick/ImageMagick status
+// Log environment variables and dependency status
 (async () => {
   console.log('Environment variables:', {
     PORT: process.env.PORT,
@@ -53,11 +56,12 @@ async function checkGraphicsMagick() {
     CONVERSION_TIMEOUT: process.env.CONVERSION_TIMEOUT,
     NODE_ENV: process.env.NODE_ENV,
   });
-  const graphicsTool = await checkGraphicsMagick();
-  if (!graphicsTool) {
+  const dependencies = await checkDependencies();
+  if (!dependencies['poppler-utils']) {
+    console.error('Critical: poppler-utils is not installed. PDF to image conversions will fail.');
+  }
+  if (!dependencies['GraphicsMagick'] && !dependencies['ImageMagick']) {
     console.error('Critical: Neither GraphicsMagick nor ImageMagick is installed. Image conversions may fail.');
-  } else {
-    console.log(`Using ${graphicsTool} for image conversions`);
   }
 })();
 
@@ -198,6 +202,19 @@ async function convertImageToPDF(inputPath, outputPath) {
   }
 }
 
+// Validate PDF file
+async function validatePDF(inputPath) {
+  try {
+    const dataBuffer = await fsPromises.readFile(inputPath);
+    await pdfParse(dataBuffer);
+    console.log(`PDF validation successful for ${inputPath}`);
+    return true;
+  } catch (err) {
+    console.error(`PDF validation failed for ${inputPath}: ${err.message}`);
+    return false;
+  }
+}
+
 // Conversion route
 app.post('/api/convert', upload.array('files', 5), async (req, res) => {
   console.log('Received /api/convert request', {
@@ -263,6 +280,14 @@ app.post('/api/convert', upload.array('files', 5), async (req, res) => {
         throw new Error(`Input file not found: ${file.originalname}`);
       }
 
+      // Validate PDF for pdfs type conversions
+      if (conversionType === 'pdfs' && inputExt === 'pdf') {
+        const isValidPDF = await validatePDF(inputPath);
+        if (!isValidPDF) {
+          throw new Error(`Invalid or corrupted PDF file: ${file.originalname}`);
+        }
+      }
+
       console.log(`Converting ${file.originalname} to ${outputExt} (type: ${conversionType}, subSection: ${subSection})`);
 
       const controller = new AbortController();
@@ -286,9 +311,11 @@ app.post('/api/convert', upload.array('files', 5), async (req, res) => {
             if (['jpg', 'png', 'gif'].includes(outputExt)) {
               try {
                 const outputBaseName = path.basename(inputPath, '.pdf');
-                const tempOutputPath = path.join(convertedDir, `${outputBaseName}-%d.${outputExt}`);
-                await execPromise(`pdftoppm -${outputExt} "${inputPath}" "${path.join(convertedDir, outputBaseName)}"`);
-                const generatedPath = path.join(convertedDir, `${outputBaseName}-1.${outputExt}`);
+                const tempOutputPath = path.join(convertedDir, `${outputBaseName}`);
+                // Use -singlefile to ensure only the first page is converted
+                const formatOption = outputExt === 'jpeg' ? '-jpeg' : `-${outputExt}`;
+                await execPromise(`pdftoppm ${formatOption} -singlefile "${inputPath}" "${tempOutputPath}"`);
+                const generatedPath = path.join(convertedDir, `${outputBaseName}.${outputExt}`);
                 if (await fsPromises.access(generatedPath).then(() => true).catch(() => false)) {
                   await fsPromises.rename(generatedPath, outputPath);
                 } else {
