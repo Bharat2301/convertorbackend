@@ -18,6 +18,7 @@
     "multer": "^2.0.1",
     "multi-format-converter": "^1.0.0",
     "path": "^0.12.7",
+    "pdf-parse": "^1.1.1",
     "tmp": "^0.2.3"
   },
   "devDependencies": {
