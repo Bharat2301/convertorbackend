@@ -3,15 +3,17 @@ services:
     name: file-converter-backend
     env: node
     plan: free
-    buildCommand: npm install
+    buildCommand: npm ci
     startCommand: node server.js
     envVars:
       - key: NODE_VERSION
-        value: 18.16.0  # Changed to 18.16.0 for better compatibility with multi-format-converter
+        value: 18.16.0  # Use LTS version for compatibility
       - key: PORT
         value: 5001
       - key: FRONTEND_URL
-        value: https://your-frontend-domain-on-render.com,http://localhost:5173  # Include localhost for dev
+        value: http://localhost:5173,https://your-frontend-domain-on-render.com  # Explicitly list origins
       - key: CONVERSION_TIMEOUT
         value: 120000
+      - key: NODE_ENV
+        value: production
     preDeployCommand: apt-get update && apt-get install -y ffmpeg libvips-dev poppler-utils

@@ -33,8 +33,9 @@ console.log('Environment variables:', {
 const allowedOrigins = process.env.FRONTEND_URL
   ? process.env.FRONTEND_URL.split(',').map(url => url.trim())
   : ['http://localhost:5173'];
-allowedOrigins.push('http://localhost:5173'); // Ensure localhost is always allowed
-allowedOrigins.push('https://your-frontend-domain-on-render.com'); // Production frontend
+if (!allowedOrigins.includes('http://localhost:5173')) {
+  allowedOrigins.push('http://localhost:5173'); // Ensure localhost is always allowed
+}
 
 const corsOptions = {
   origin: (origin, callback) => {
@@ -57,16 +58,29 @@ app.use(cors(corsOptions));
 // Middleware to log incoming requests
 app.use((req, res, next) => {
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.url} from ${req.get('Origin') || 'unknown'}`);
+  res.setHeader('X-Powered-By', 'File-Converter'); // Optional: hide Express version
   next();
 });
 
-// Test endpoint to verify server is running
+// Test endpoint to verify server status and CORS
 app.get('/api/test', (req, res) => {
-  res.status(200).json({ message: 'Server is running', allowedOrigins });
+  res.status(200).json({
+    message: 'Server is running',
+    allowedOrigins,
+    nodeVersion: process.version,
+    timestamp: new Date().toISOString(),
+  });
 });
 
 // Initialize FileConverter
-const converter = new FileConverter({ pdfParse });
+let converter;
+try {
+  converter = new FileConverter({ pdfParse });
+  console.log('FileConverter initialized successfully');
+} catch (err) {
+  console.error('Failed to initialize FileConverter:', err.message, err.stack);
+  process.exit(1); // Exit to ensure Render logs the error
+}
 
 // Supported formats
 const supportedFormats = {
@@ -109,21 +123,21 @@ async function ensureDirectories() {
     await fsPromises.mkdir(convertedDir, { recursive: true });
     console.log('Directories created:', { uploadsDir, convertedDir });
   } catch (err) {
-    console.error('Error creating directories:', err.message);
+    console.error('Error creating directories:', err.message, err.stack);
     throw new Error('Failed to initialize server directories.');
   }
 }
 
 // Health check endpoint
 app.get('/health', (req, res) => {
-  res.status(200).json({ status: 'OK', allowedOrigins });
+  res.status(200).json({ status: 'OK', allowedOrigins, timestamp: new Date().toISOString() });
 });
 
 // Conversion route
 app.post('/api/convert', upload.array('files', 5), async (req, res) => {
   console.log('Received /api/convert request', {
     files: req.files ? req.files.map(f => f.originalname) : [],
-    body: req.body,
+    formats: req.body.formats,
   });
   let tempFiles = req.files ? req.files.map(f => f.path) : [];
   try {
@@ -303,7 +317,7 @@ async function cleanupFiles(filePaths) {
             console.error(`Failed to delete file ${filePath} after ${maxRetries} attempts: ${err.message}`);
           }
         } else {
-          console.error(`Error deleting file ${filePath}: ${err.message}`);
+          console.error(`Error deleting file ${filePath}:`, err.message);
           break;
         }
       }
