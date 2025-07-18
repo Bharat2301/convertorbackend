@@ -60,8 +60,8 @@ async function checkDependencies() {
   if (!dependencies['poppler-utils']) {
     console.error('Critical: poppler-utils is not installed. PDF to image conversions will fail.');
   }
-  if (!dependencies['GraphicsMagick'] && !dependencies['ImageMagick']) {
-    console.error('Critical: Neither GraphicsMagick nor ImageMagick is installed. Image conversions may fail.');
+  if (!dependencies['ImageMagick']) {
+    console.error('Critical: ImageMagick is not installed. GIF conversions will fail.');
   }
 })();
 
@@ -215,6 +215,17 @@ async function validatePDF(inputPath) {
   }
 }
 
+// Convert PNG to GIF using ImageMagick
+async function convertPngToGif(inputPath, outputPath) {
+  try {
+    await execPromise(`convert "${inputPath}" "${outputPath}"`);
+    console.log(`Converted PNG to GIF: ${outputPath}`);
+  } catch (err) {
+    console.error(`PNG to GIF conversion failed: ${err.message}`);
+    throw new Error(`Failed to convert PNG to GIF: ${err.message}`);
+  }
+}
+
 // Conversion route
 app.post('/api/convert', upload.array('files', 5), async (req, res) => {
   console.log('Received /api/convert request', {
@@ -312,14 +323,26 @@ app.post('/api/convert', upload.array('files', 5), async (req, res) => {
               try {
                 const outputBaseName = path.basename(inputPath, '.pdf');
                 const tempOutputPath = path.join(convertedDir, `${outputBaseName}`);
-                // Use -singlefile to ensure only the first page is converted
-                const formatOption = outputExt === 'jpeg' ? '-jpeg' : `-${outputExt}`;
-                await execPromise(`pdftoppm ${formatOption} -singlefile "${inputPath}" "${tempOutputPath}"`);
-                const generatedPath = path.join(convertedDir, `${outputBaseName}.${outputExt}`);
-                if (await fsPromises.access(generatedPath).then(() => true).catch(() => false)) {
-                  await fsPromises.rename(generatedPath, outputPath);
+                let formatOption = outputExt === 'jpg' ? '-jpeg' : `-${outputExt}`;
+                // For GIF, first convert to PNG, then use ImageMagick
+                if (outputExt === 'gif') {
+                  formatOption = '-png';
+                  const tempPngPath = path.join(convertedDir, `${outputBaseName}.png`);
+                  await execPromise(`pdftoppm -png -singlefile "${inputPath}" "${tempOutputPath}"`);
+                  if (await fsPromises.access(tempPngPath).then(() => true).catch(() => false)) {
+                    await convertPngToGif(tempPngPath, outputPath);
+                    tempFiles.push(tempPngPath); // Add temp PNG to cleanup
+                  } else {
+                    throw new Error(`PDF to PNG intermediate output not found: ${tempPngPath}`);
+                  }
                 } else {
-                  throw new Error(`PDF to image output not found: ${generatedPath}`);
+                  await execPromise(`pdftoppm ${formatOption} -singlefile "${inputPath}" "${tempOutputPath}"`);
+                  const generatedPath = path.join(convertedDir, `${outputBaseName}.${outputExt}`);
+                  if (await fsPromises.access(generatedPath).then(() => true).catch(() => false)) {
+                    await fsPromises.rename(generatedPath, outputPath);
+                  } else {
+                    throw new Error(`PDF to image output not found: ${generatedPath}`);
+                  }
                 }
               } catch (pdfError) {
                 throw new Error(`PDF to image conversion failed for ${inputPath} to ${outputExt}: ${pdfError.message}`);
@@ -355,7 +378,8 @@ app.post('/api/convert', upload.array('files', 5), async (req, res) => {
     console.error('Conversion error:', error.message, error.stack);
     res.status(500).json({ error: error.message || 'Conversion failed.' });
   } finally {
-    await cleanupFiles(tempFiles.filter(file => file.startsWith(uploadsDir) || file.startsWith(convertedDir)));
+    // Only clean up input files, not output files
+    await cleanupFiles(tempFiles.filter(file => file.startsWith(uploadsDir)));
   }
 });
 
@@ -372,6 +396,7 @@ app.get('/converted/:filename', async (req, res) => {
         res.status(500).json({ error: 'Failed to send converted file.' });
       } else {
         console.log(`File sent successfully: ${filePath}`);
+        // Clean up the file after successful download
         await cleanupFiles([filePath]);
       }
     });
