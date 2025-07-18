@@ -47,7 +47,7 @@ async function checkDependencies() {
     }
   }
 
-  // Check if file-type is installed (Node module, not system command)
+  // Check if file-type is installed
   try {
     require('file-type');
     console.log('file-type module is installed and available');
@@ -151,7 +151,7 @@ try {
 
 // Supported formats
 const supportedFormats = {
-  image: ['bmp', 'eps', 'ico', 'svg', 'tga', 'wbmp', 'jpg', 'png', 'gif'],
+  image: ['bmp', 'eps', 'ico', 'svg', 'tga', 'wbmp', 'jpg', 'png', 'gif', 'pdf'], // Added 'pdf'
   compressor: ['svg', 'jpg', 'png'],
   pdfs: ['jpg', 'png', 'gif', 'docx', 'pdf'],
   audio: ['aac', 'aiff', 'm4v', 'mmf', 'wma', '3g2'],
@@ -377,14 +377,13 @@ app.post('/api/convert', upload.array('files', 5), async (req, res) => {
                 const outputBaseName = path.basename(inputPath, '.pdf');
                 const tempOutputPath = path.join(convertedDir, `${outputBaseName}`);
                 let formatOption = outputExt === 'jpg' ? '-jpeg' : `-${outputExt}`;
-                // For GIF, first convert to PNG, then use ImageMagick
                 if (outputExt === 'gif') {
                   formatOption = '-png';
                   const tempPngPath = path.join(convertedDir, `${outputBaseName}.png`);
                   await execPromise(`pdftoppm -png -singlefile "${inputPath}" "${tempOutputPath}"`);
                   if (await fsPromises.access(tempPngPath).then(() => true).catch(() => false)) {
                     await convertPngToGif(tempPngPath, outputPath);
-                    tempFiles.push(tempPngPath); // Add temp PNG to cleanup
+                    tempFiles.push(tempPngPath);
                   } else {
                     throw new Error(`PDF to PNG intermediate output not found: ${tempPngPath}`);
                   }
@@ -449,7 +448,6 @@ app.get('/converted/:filename', async (req, res) => {
         res.status(500).json({ error: 'Failed to send converted file.' });
       } else {
         console.log(`File sent successfully: ${filePath}`);
-        // Clean up the file after successful download
         await cleanupFiles([filePath]);
       }
     });
