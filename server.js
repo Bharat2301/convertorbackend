@@ -33,6 +33,7 @@ async function checkDependencies() {
     { name: 'GraphicsMagick', command: 'gm version' },
     { name: 'ImageMagick', command: 'convert -version' },
     { name: 'poppler-utils', command: 'pdftoppm -v' },
+    { name: 'libvips', command: 'vips --version' }, // Added to verify libvips
   ];
   const results = {};
 
@@ -57,6 +58,16 @@ async function checkDependencies() {
     results['file-type'] = false;
   }
 
+  // Check if image-to-pdf is installed
+  try {
+    require('image-to-pdf');
+    console.log('image-to-pdf module is installed and available');
+    results['image-to-pdf'] = true;
+  } catch (err) {
+    console.warn('image-to-pdf module not found:', err.message);
+    results['image-to-pdf'] = false;
+  }
+
   return results;
 }
 
@@ -77,6 +88,12 @@ async function checkDependencies() {
   }
   if (!dependencies['file-type']) {
     console.error('Critical: file-type module is not installed. Image validation will fail.');
+  }
+  if (!dependencies['image-to-pdf']) {
+    console.error('Critical: image-to-pdf module is not installed. Image to PDF conversions will fail.');
+  }
+  if (!dependencies['libvips']) {
+    console.error('Critical: libvips is not installed. Image to PDF conversions may fail.');
   }
 })();
 
@@ -227,10 +244,16 @@ async function convertImageToPDF(inputPath, outputPath) {
       throw new Error(`Invalid image file: ${inputPath}`);
     }
 
+    // Log imgToPDF to debug
+    console.log('imgToPDF type:', typeof imgToPDF, 'isFunction:', typeof imgToPDF === 'function');
+    if (typeof imgToPDF !== 'function') {
+      throw new Error('imgToPDF is not a function. Check image-to-pdf module installation.');
+    }
+
     const imgStream = fs.createReadStream(inputPath);
     const pdfStream = fs.createWriteStream(outputPath);
     await new Promise((resolve, reject) => {
-      imgToPDF([inputPath], 'A4').pipe(pdfStream); // Updated to use imgToPDF directly with 'A4'
+      imgToPDF([inputPath], 'A4').pipe(pdfStream);
       pdfStream.on('finish', () => {
         console.log(`Converted image to PDF: ${outputPath}`);
         resolve();

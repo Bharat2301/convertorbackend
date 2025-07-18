@@ -16,4 +16,5 @@ services:
         value: 120000
       - key: NODE_ENV
         value: production
-    preDeployCommand: apt-get update && apt-get install -y ffmpeg libvips-dev poppler-utils graphicsmagick imagemagick
+    preDeployCommand: apt-get update && apt-get install -y ffmpeg libvips-dev poppler-utils graphicsmagick imagemagick && apt-get clean
+    postDeployCommand: vips --version && npm ls image-to-pdf
