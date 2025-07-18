@@ -1,4 +1,3 @@
-i have server.js file 
 require('dotenv').config();
 const express = require('express');
 const multer = require('multer');
@@ -8,6 +7,10 @@ const path = require('path');
 const cors = require('cors');
 const tmp = require('tmp');
 const { FileConverter } = require('multi-format-converter');
+const { exec } = require('child_process');
+const util = require('util');
+
+const execPromise = util.promisify(exec);
 
 // Patch pdf-parse to handle ENOENT error
 let pdfParse;
@@ -22,27 +25,61 @@ const app = express();
 const port = process.env.PORT || 5001;
 const conversionTimeout = parseInt(process.env.CONVERSION_TIMEOUT) || 120000;
 
-// Log environment variables for debugging
-console.log('Environment variables:', {
-  PORT: process.env.PORT,
-  FRONTEND_URL: process.env.FRONTEND_URL,
-  CONVERSION_TIMEOUT: process.env.CONVERSION_TIMEOUT,
-  NODE_ENV: process.env.NODE_ENV,
-});
+// Check for GraphicsMagick/ImageMagick availability
+async function checkGraphicsMagick() {
+  try {
+    await execPromise('gm version');
+    console.log('GraphicsMagick is installed and available');
+    return 'GraphicsMagick';
+  } catch (err) {
+    console.warn('GraphicsMagick not found:', err.message);
+    try {
+      await execPromise('convert -version');
+      console.log('ImageMagick is installed and available');
+      return 'ImageMagick';
+    } catch (err) {
+      console.error('ImageMagick not found:', err.message);
+      return null;
+    }
+  }
+}
+
+// Log environment variables and GraphicsMagick/ImageMagick status
+(async () => {
+  console.log('Environment variables:', {
+    PORT: process.env.PORT,
+    FRONTEND_URL: process.env.FRONTEND_URL,
+    CONVERSION_TIMEOUT: process.env.CONVERSION_TIMEOUT,
+    NODE_ENV: process.env.NODE_ENV,
+  });
+  const graphicsTool = await checkGraphicsMagick();
+  if (!graphicsTool) {
+    console.error('Critical: Neither GraphicsMagick nor ImageMagick is installed. PDF-to-image conversions will fail.');
+  } else {
+    console.log(`Using ${graphicsTool} for image conversions`);
+  }
+})();
 
 // Configure CORS with multiple allowed origins
-const allowedOrigins = process.env.FRONTEND_URL
-  ? process.env.FRONTEND_URL.split(',').map(url => url.trim())
-  : ['http://localhost:5173', 'https://nion-iota.vercel.app'];
-allowedOrigins.push('http://localhost:5173'); // Ensure localhost is always allowed
-allowedOrigins.push('https://nion-iota.vercel.app'); // Ensure live frontend is always allowed
+const allowedOrigins = [
+  ...(process.env.FRONTEND_URL
+    ? process.env.FRONTEND_URL.split(',').map(url => url.trim())
+    : ['http://localhost:5173', 'https://nion-ochre.vercel.app']),
+];
+const uniqueAllowedOrigins = [...new Set(allowedOrigins)]; // Remove duplicates
+if (!uniqueAllowedOrigins.includes('http://localhost:5173')) {
+  uniqueAllowedOrigins.push('http://localhost:5173');
+}
+if (!uniqueAllowedOrigins.includes('https://nion-ochre.vercel.app')) {
+  uniqueAllowedOrigins.push('https://nion-ochre.vercel.app');
+}
 
 const corsOptions = {
   origin: (origin, callback) => {
-    if (!origin || allowedOrigins.includes(origin)) {
+    if (!origin || uniqueAllowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
-      console.error(`CORS request blocked from origin: ${origin}. Allowed origins: ${allowedOrigins.join(', ')}`);
+      console.error(`CORS request blocked from origin: ${origin}. Allowed origins: ${uniqueAllowedOrigins.join(', ')}`);
       callback(new Error('Not allowed by CORS'));
     }
   },
@@ -67,7 +104,7 @@ app.get('/', (req, res) => {
   res.status(200).json({
     message: 'File Converter Backend is running',
     version: '1.0.0',
-    allowedOrigins,
+    allowedOrigins: uniqueAllowedOrigins,
     timestamp: new Date().toISOString(),
   });
 });
@@ -76,7 +113,7 @@ app.get('/', (req, res) => {
 app.get('/api/test', (req, res) => {
   res.status(200).json({
     message: 'Server is running',
-    allowedOrigins,
+    allowedOrigins: uniqueAllowedOrigins,
     nodeVersion: process.version,
     timestamp: new Date().toISOString(),
   });
@@ -140,7 +177,7 @@ async function ensureDirectories() {
 
 // Health check endpoint
 app.get('/health', (req, res) => {
-  res.status(200).json({ status: 'OK', allowedOrigins, timestamp: new Date().toISOString() });
+  res.status(200).json({ status: 'OK', allowedOrigins: uniqueAllowedOrigins, timestamp: new Date().toISOString() });
 });
 
 // Conversion route
@@ -225,13 +262,17 @@ app.post('/api/convert', upload.array('files', 5), async (req, res) => {
             break;
           case 'pdfs':
             if (['jpg', 'png', 'gif'].includes(outputExt)) {
-              await converter.pdfToImage({ input: inputPath, output: convertedDir, format: outputExt });
-              const outputBaseName = path.basename(inputPath, '.pdf');
-              const generatedPath = path.join(convertedDir, `${outputBaseName}-1.${outputExt}`);
-              if (await fsPromises.access(generatedPath).then(() => true).catch(() => false)) {
-                await fsPromises.rename(generatedPath, outputPath);
-              } else {
-                throw new Error(`PDF to image output not found: ${generatedPath}`);
+              try {
+                await converter.pdfToImage({ input: inputPath, output: convertedDir, format: outputExt });
+                const outputBaseName = path.basename(inputPath, '.pdf');
+                const generatedPath = path.join(convertedDir, `${outputBaseName}-1.${outputExt}`);
+                if (await fsPromises.access(generatedPath).then(() => true).catch(() => false)) {
+                  await fsPromises.rename(generatedPath, outputPath);
+                } else {
+                  throw new Error(`PDF to image output not found: ${generatedPath}`);
+                }
+              } catch (pdfError) {
+                throw new Error(`PDF to image conversion failed for ${inputPath} to ${convertedDir} (${outputExt}): ${pdfError.message}`);
               }
             } else if (outputExt === 'docx') {
               await converter.pdfToWord({ input: inputPath, output: outputPath });
@@ -364,7 +405,7 @@ async function startServer() {
     await ensureDirectories();
     app.listen(port, () => {
       console.log(`Server running on http://localhost:${port}`);
-      console.log(`CORS allowed origins: ${allowedOrigins.join(', ')}`);
+      console.log(`CORS allowed origins: ${uniqueAllowedOrigins.join(', ')}`);
     });
   } catch (err) {
     console.error('Failed to start server:', err.message, err.stack);
@@ -373,10 +414,57 @@ async function startServer() {
 }
 
 startServer();
+this is my server.js 
+services:
+  - type: web
+    name: file-converter-backend
+    env: node
+    plan: free
+    buildCommand: npm ci
+    startCommand: node server.js
+    envVars:
+      - key: NODE_VERSION
+        value: 18.16.0  # Use LTS version for compatibility
+      - key: PORT
+        value: 5001
+      - key: FRONTEND_URL
+        value: http://localhost:5173,https://nion-ochre.vercel.app
+      - key: CONVERSION_TIMEOUT
+        value: 120000
+      - key: NODE_ENV
+        value: production
+    preDeployCommand: apt-get update && apt-get install -y ffmpeg libvips-dev poppler-utils graphicsmagick
+    this is my render.yaml file 
+    {
+  "name": "file-converter-backend",
+  "version": "1.0.0",
+  "main": "server.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.18.2",
+    "multer": "^1.4.5-lts.1",
+    "multi-format-converter": "^1.1.2",
+    "pdf-parse": "^1.1.1",
+    "tmp": "^0.2.3"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.7"
+  },
+  "description": ""
+}
+this is my package.json file 
 PORT=5001
 FRONTEND_URL=http://localhost:5173,https://nion-ochre.vercel.app
 CONVERSION_TIMEOUT=120000
-NODE_ENV=development
-[2025-07-18T09:27:52.502Z] GET / from unknown
-CORS request blocked from origin: https://nion-ochre.vercel.app. Allowed origins: http://localhost:5173, https://nion-iota.vercel.app, http://localhost:5173, https://nion-iota.vercel.app
-Unhandled error: Not allowed by CORS Error: Not allowed by CORS
+NODE_ENV=development 
+this is my .env file 
+this is my backend code 

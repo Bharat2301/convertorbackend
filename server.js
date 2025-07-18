@@ -7,6 +7,7 @@ const path = require('path');
 const cors = require('cors');
 const tmp = require('tmp');
 const { FileConverter } = require('multi-format-converter');
+const imgToPDF = require('image-to-pdf');
 const { exec } = require('child_process');
 const util = require('util');
 
@@ -54,7 +55,7 @@ async function checkGraphicsMagick() {
   });
   const graphicsTool = await checkGraphicsMagick();
   if (!graphicsTool) {
-    console.error('Critical: Neither GraphicsMagick nor ImageMagick is installed. PDF-to-image conversions will fail.');
+    console.error('Critical: Neither GraphicsMagick nor ImageMagick is installed. Image conversions may fail.');
   } else {
     console.log(`Using ${graphicsTool} for image conversions`);
   }
@@ -66,7 +67,7 @@ const allowedOrigins = [
     ? process.env.FRONTEND_URL.split(',').map(url => url.trim())
     : ['http://localhost:5173', 'https://nion-ochre.vercel.app']),
 ];
-const uniqueAllowedOrigins = [...new Set(allowedOrigins)]; // Remove duplicates
+const uniqueAllowedOrigins = [...new Set(allowedOrigins)];
 if (!uniqueAllowedOrigins.includes('http://localhost:5173')) {
   uniqueAllowedOrigins.push('http://localhost:5173');
 }
@@ -126,14 +127,14 @@ try {
   console.log('FileConverter initialized successfully');
 } catch (err) {
   console.error('Failed to initialize FileConverter:', err.message, err.stack);
-  process.exit(1); // Exit to ensure Render logs the error
+  process.exit(1);
 }
 
 // Supported formats
 const supportedFormats = {
-  image: ['bmp', 'eps', 'ico', 'svg', 'tga', 'wbmp'],
-  compressor: ['svg'],
-  pdfs: ['jpg', 'png', 'gif', 'docx'],
+  image: ['bmp', 'eps', 'ico', 'svg', 'tga', 'wbmp', 'jpg', 'png', 'gif'],
+  compressor: ['svg', 'jpg', 'png'],
+  pdfs: ['jpg', 'png', 'gif', 'docx', 'pdf'],
   audio: ['aac', 'aiff', 'm4v', 'mmf', 'wma', '3g2'],
 };
 
@@ -142,7 +143,6 @@ const allFormats = [
   ...supportedFormats.compressor,
   ...supportedFormats.pdfs,
   ...supportedFormats.audio,
-  'pdf',
 ];
 
 // Configure multer
@@ -179,6 +179,24 @@ async function ensureDirectories() {
 app.get('/health', (req, res) => {
   res.status(200).json({ status: 'OK', allowedOrigins: uniqueAllowedOrigins, timestamp: new Date().toISOString() });
 });
+
+// Image to PDF conversion helper
+async function convertImageToPDF(inputPath, outputPath) {
+  try {
+    const imgStream = fs.createReadStream(inputPath);
+    const pdfStream = fs.createWriteStream(outputPath);
+    await new Promise((resolve, reject) => {
+      imgToPDF([inputPath], imgToPDF.sizes.A4).pipe(pdfStream);
+      pdfStream.on('finish', resolve);
+      pdfStream.on('error', reject);
+      imgStream.on('error', reject);
+    });
+    console.log(`Converted image to PDF: ${outputPath}`);
+  } catch (err) {
+    console.error(`Image to PDF conversion failed: ${err.message}`);
+    throw new Error(`Failed to convert image to PDF: ${err.message}`);
+  }
+}
 
 // Conversion route
 app.post('/api/convert', upload.array('files', 5), async (req, res) => {
@@ -255,7 +273,11 @@ app.post('/api/convert', upload.array('files', 5), async (req, res) => {
       try {
         switch (conversionType) {
           case 'image':
-            await converter.convertImage({ input: inputPath, output: outputPath, format: outputExt });
+            if (outputExt === 'pdf') {
+              await convertImageToPDF(inputPath, outputPath);
+            } else {
+              await converter.convertImage({ input: inputPath, output: outputPath, format: outputExt });
+            }
             break;
           case 'compressor':
             await converter.compressSvg({ input: inputPath, output: outputPath });
@@ -263,8 +285,9 @@ app.post('/api/convert', upload.array('files', 5), async (req, res) => {
           case 'pdfs':
             if (['jpg', 'png', 'gif'].includes(outputExt)) {
               try {
-                await converter.pdfToImage({ input: inputPath, output: convertedDir, format: outputExt });
                 const outputBaseName = path.basename(inputPath, '.pdf');
+                const tempOutputPath = path.join(convertedDir, `${outputBaseName}-%d.${outputExt}`);
+                await execPromise(`pdftoppm -${outputExt} "${inputPath}" "${path.join(convertedDir, outputBaseName)}"`);
                 const generatedPath = path.join(convertedDir, `${outputBaseName}-1.${outputExt}`);
                 if (await fsPromises.access(generatedPath).then(() => true).catch(() => false)) {
                   await fsPromises.rename(generatedPath, outputPath);
@@ -272,7 +295,7 @@ app.post('/api/convert', upload.array('files', 5), async (req, res) => {
                   throw new Error(`PDF to image output not found: ${generatedPath}`);
                 }
               } catch (pdfError) {
-                throw new Error(`PDF to image conversion failed for ${inputPath} to ${convertedDir} (${outputExt}): ${pdfError.message}`);
+                throw new Error(`PDF to image conversion failed for ${inputPath} to ${outputExt}: ${pdfError.message}`);
               }
             } else if (outputExt === 'docx') {
               await converter.pdfToWord({ input: inputPath, output: outputPath });
@@ -305,7 +328,7 @@ app.post('/api/convert', upload.array('files', 5), async (req, res) => {
     console.error('Conversion error:', error.message, error.stack);
     res.status(500).json({ error: error.message || 'Conversion failed.' });
   } finally {
-    await cleanupFiles(tempFiles.filter(file => file.startsWith(uploadsDir)));
+    await cleanupFiles(tempFiles.filter(file => file.startsWith(uploadsDir) || file.startsWith(convertedDir)));
   }
 });
 
