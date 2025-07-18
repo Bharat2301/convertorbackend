@@ -337,8 +337,9 @@ async function convertImage(inputPath, outputPath, format) {
   }
 }
 
-async function convertPdf(inputPath, outputPath, format) {
-  const inputExt = path.extname(inputPath).toLowerCase().slice(1);
+async function convertPdf(inputPath, outputPath, format, originalName) {
+  const inputExt = path.extname(originalName).toLowerCase().slice(1);
+  console.log(`Extracted input extension from originalName ${originalName}: ${inputExt}`);
   if (inputExt !== 'pdf') {
     throw new Error(`PDF conversion only supports PDF input files. Got ${inputExt}.`);
   }
@@ -569,7 +570,7 @@ app.post('/api/convert', upload.array('files', 5), async (req, res) => {
             await convertCompressor(inputPath, outputPath, outputExt);
             break;
           case 'pdfs':
-            await convertPdf(inputPath, outputPath, outputExt);
+            await convertPdf(inputPath, outputPath, outputExt, file.originalname);
             break;
           case 'audio':
           case 'video':
