@@ -1,4 +1,3 @@
-// backend/server.js (modified)
 require('dotenv').config();
 const express = require('express');
 const multer = require('multer');
@@ -9,22 +8,22 @@ const cors = require('cors');
 const tmp = require('tmp');
 const { FileConverter } = require('multi-format-converter');
 
-// Patch pdf-parse to avoid test file read
+// Patch pdf-parse to handle ENOENT error
 let pdfParse;
 try {
   pdfParse = require('pdf-parse');
 } catch (err) {
   console.warn('pdf-parse initialization failed:', err.message);
-  // Fallback: Mock pdf-parse functionality or handle gracefully
-  pdfParse = { renderPage: () => Promise.resolve(Buffer.from('')) }; // Minimal mock
+  // Minimal mock to prevent crashes
+  pdfParse = { renderPage: () => Promise.resolve(Buffer.from('')) };
 }
 
 const app = express();
-const port = process.env.PORT || 5001; // Match PORT to .env (5001)
+const port = process.env.PORT || 5001;
 const conversionTimeout = parseInt(process.env.CONVERSION_TIMEOUT) || 120000;
 
-// Initialize FileConverter
-const converter = new FileConverter({ pdfParse }); // Pass patched pdfParse if supported
+// Initialize FileConverter with patched pdf-parse (if supported)
+const converter = new FileConverter({ pdfParse });
 
 // Configure CORS with frontend URL
 const corsOptions = {
@@ -147,6 +146,8 @@ app.post('/api/convert', upload.array('files', 5), async (req, res) => {
         throw new Error(`Input file not found: ${file.originalname}`);
       }
 
+      console.log(`Converting ${file.originalname} to ${outputExt} (type: ${conversionType}, subSection: ${subSection})`);
+
       const controller = new AbortController();
       const timeoutId = setTimeout(() => {
         controller.abort(new Error('Conversion timed out'));
@@ -163,7 +164,6 @@ app.post('/api/convert', upload.array('files', 5), async (req, res) => {
           case 'pdfs':
             if (['jpg', 'png', 'gif'].includes(outputExt)) {
               await converter.pdfToImage({ input: inputPath, output: convertedDir, format: outputExt });
-              // pdfToImage saves to convertedDir with a different naming convention
               const outputBaseName = path.basename(inputPath, '.pdf');
               const generatedPath = path.join(convertedDir, `${outputBaseName}-1.${outputExt}`);
               if (await fsPromises.access(generatedPath).then(() => true).catch(() => false)) {
@@ -189,7 +189,7 @@ app.post('/api/convert', upload.array('files', 5), async (req, res) => {
         path: outputPath,
         name: path.basename(outputPath),
       });
-      tempFiles.push(outputPath); // Track output files
+      tempFiles.push(outputPath);
     }
 
     res.json({
@@ -202,7 +202,6 @@ app.post('/api/convert', upload.array('files', 5), async (req, res) => {
     console.error('Conversion error:', error.message);
     res.status(500).json({ error: error.message || 'Conversion failed.' });
   } finally {
-    // Cleanup only input files (uploads), keep converted files
     await cleanupFiles(tempFiles.filter(file => file.startsWith(uploadsDir)));
   }
 });
@@ -245,7 +244,7 @@ app.delete('/api/delete/:filename', async (req, res) => {
 // Cleanup files with retry logic
 async function cleanupFiles(filePaths) {
   const maxRetries = 3;
-  const retryDelay = 1000; // 1 second
+  const retryDelay = 1000;
   for (const filePath of filePaths) {
     let attempts = 0;
     while (attempts < maxRetries) {
@@ -273,6 +272,23 @@ async function cleanupFiles(filePaths) {
     }
   }
 }
+
+// Periodic cleanup of old converted files (24 hours)
+setInterval(async () => {
+  try {
+    const files = await fsPromises.readdir(convertedDir);
+    const now = Date.now();
+    for (const file of files) {
+      const filePath = path.join(convertedDir, file);
+      const stats = await fsPromises.stat(filePath);
+      if (now - stats.mtimeMs > 24 * 60 * 60 * 1000) {
+        await cleanupFiles([filePath]);
+      }
+    }
+  } catch (err) {
+    console.error('Error in periodic cleanup:', err.message);
+  }
+}, 60 * 60 * 1000); // Run hourly
 
 // Error handling middleware
 app.use((err, req, res, next) => {
